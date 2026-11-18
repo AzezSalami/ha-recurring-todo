@@ -1,0 +1,91 @@
+# Raises the patch version in manifest.json on every push to main,
+# commits it, tags it (vX.Y.Z) and creates a GitHub release so HACS sees the update.
+#
+# Bump minor/major instead by putting "#minor" or "#major" in the commit message,
+# or run it manually from the Actions tab and pick the part to bump.
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      part:
+        description: "Version part to bump"
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    # Skip the commit this workflow pushes itself (pushes made with GITHUB_TOKEN
+    # don't trigger workflows anyway; this is a second safeguard).
+    if: github.actor != 'github-actions[bot]' && !contains(github.event.head_commit.message, '[skip version]')
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Work out version part
+        id: part
+        env:
+          MSG: ${{ github.event.head_commit.message }}
+          INPUT_PART: ${{ inputs.part }}
+        run: |
+          part="${INPUT_PART:-patch}"
+          case "$MSG" in
+            *"#major"*) part=major ;;
+            *"#minor"*) part=minor ;;
+          esac
+          echo "part=$part" >> "$GITHUB_OUTPUT"
+
+      - name: Set new version in manifest.json
+        id: bump
+        env:
+          PART: ${{ steps.part.outputs.part }}
+        run: |
+          python3 - <<'EOF'
+          import json, os, pathlib
+          path = pathlib.Path("custom_components/recurring_todo/manifest.json")
+          manifest = json.loads(path.read_text(encoding="utf-8"))
+          major, minor, patch = (int(x) for x in manifest["version"].split("."))
+          part = os.environ["PART"]
+          if part == "major":
+              major, minor, patch = major + 1, 0, 0
+          elif part == "minor":
+              minor, patch = minor + 1, 0
+          else:
+              patch += 1
+          version = f"{major}.{minor}.{patch}"
+          manifest["version"] = version
+          path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+              out.write(f"version={version}\n")
+          print(f"New version: {version}")
+          EOF
+
+      - name: Commit and tag
+        env:
+          VERSION: ${{ steps.bump.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add custom_components/recurring_todo/manifest.json
+          git commit -m "Release v$VERSION [skip version]"
+          git tag "v$VERSION"
+          git push origin HEAD:main
+          git push origin "v$VERSION"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.bump.outputs.version }}
+        run: gh release create "v$VERSION" --title "v$VERSION" --generate-notes
