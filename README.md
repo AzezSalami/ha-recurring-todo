@@ -23,17 +23,25 @@ The buttons need the **Home Assistant Companion app** (Android or iOS). Other no
 
 ## Adding recurring tasks
 
-### From the UI
-**Settings → Devices & Services → Recurring To-do → Configure → Add a recurring task**
+### From the Recurring To-do page (easiest)
+After installing, a **Recurring To-do** page appears in the sidebar. It shows every recurring task with its schedule and when it's next due. From there you can:
 
-- **Repeats**: Daily, Weekly or Monthly
+- **Add task**: name, Daily / Weekly / Monthly, "every N", weekdays or day of month, time, optional start date and notes, and whether to send a notification. A line at the bottom shows the schedule in plain words before you save.
+- **Edit** (pencil): change anything. If the task is on the list right now, that item gets the new name and notes too.
+- **Delete** (bin): stops the task. Items already on the list stay there.
+- **Run now**: puts the task on the list and notifies right away, without changing the schedule.
+
+If you have more than one list, switch between them with the buttons at the top. The page works on phones too (Companion app → sidebar → Recurring To-do).
+
+What the fields mean:
 - **Every**: 1 = every day/week/month, 2 = every second one, 3 + Monthly = quarterly, 12 + Monthly = yearly
-- **On weekdays**: for weekly tasks (you can pick several)
-- **On day of month**: for monthly tasks. 31 means the last day in shorter months.
-- **At time**: when the item is added and the notification is sent
-- **Starting from**: optional first date
+- **On** (weekly): pick one or more weekdays
+- **On day** (monthly): 29–31 fall on the last day in shorter months
+- **At**: when the item is added and the notification is sent
+- **Starting from**: optional first date. For "every 2 weeks" or "every 3 months" it decides which weeks or months count.
 
-Use **Remove recurring tasks** in the same menu to stop a task. Items already on the list stay there.
+### From Settings
+**Settings → Devices & Services → Recurring To-do → Configure** has the same options as plain forms: **Add**, **Edit**, **Remove** recurring tasks, and the notification settings.
 
 ### From automations / scripts
 

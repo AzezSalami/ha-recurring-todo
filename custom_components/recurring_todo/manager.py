@@ -24,6 +24,8 @@ from .const import (
     DEFAULT_LATER_MINUTES,
     DOMAIN,
     EVENT_ACTION_HANDLED,
+    FREQ_MONTHLY,
+    FREQ_WEEKLY,
     NOTIFICATION_ACTION_EVENT,
 )
 from .recurrence import next_occurrence
@@ -178,16 +180,21 @@ class RecurringTodoManager:
         await self._async_changed()
 
     # ------------------------------------------------------------------ tasks
-    async def async_add_task(self, task: dict[str, Any]) -> dict[str, Any]:
+    def _normalize_task(self, task: dict[str, Any]) -> dict[str, Any]:
+        """Fill defaults, normalise formats and compute next_due."""
         task = dict(task)
         task.setdefault("task_id", _new_id())
         task.setdefault("interval", 1)
         task.setdefault("notify", True)
         task.setdefault("time", "09:00:00")
+        if task.get("frequency") != FREQ_WEEKLY:
+            task.pop("weekdays", None)
+        if task.get("frequency") != FREQ_MONTHLY:
+            task.pop("day_of_month", None)
         if not task.get("start_date"):
             today = dt_util.now().date()
             start = today
-            if task.get("frequency") == "monthly":
+            if task.get("frequency") == FREQ_MONTHLY:
                 # Anchor on the month of the next matching day, so "every 3
                 # months on the 15th" added on the 20th starts next month.
                 dom = int(task.get("day_of_month") or today.day)
@@ -202,7 +209,47 @@ class RecurringTodoManager:
             task["start_date"] = task["start_date"].isoformat()
         nxt = next_occurrence(task, dt_util.now() - timedelta(seconds=1), self.tz)
         task["next_due"] = nxt.isoformat() if nxt else None
+        return task
+
+    def validate_task(
+        self, task: dict[str, Any], *, exclude_id: str | None = None, strict: bool = True
+    ) -> str | None:
+        """Return an error key for invalid task data, or None if it is fine.
+
+        strict also requires weekdays for weekly tasks (the UI always asks for them;
+        the add_task service falls back to the start date's weekday).
+        """
+        name = str(task.get("name") or "").strip()
+        if not name:
+            return "name_required"
+        other = self.find_task(name)
+        if other is not None and other["task_id"] != exclude_id:
+            return "already_exists"
+        if strict and task.get("frequency") == FREQ_WEEKLY and not task.get("weekdays"):
+            return "weekdays_required"
+        return None
+
+    async def async_add_task(self, task: dict[str, Any]) -> dict[str, Any]:
+        task = self._normalize_task(task)
         self.tasks[task["task_id"]] = task
+        await self._async_changed()
+        return task
+
+    async def async_update_task(self, task_id: str, task: dict[str, Any]) -> dict[str, Any]:
+        """Replace a task's settings (keeps its id) and reschedule it."""
+        if task_id not in self.tasks:
+            raise ValueError(f"Recurring task '{task_id}' not found")
+        task = self._normalize_task({**task, "task_id": task_id})
+        self.tasks[task_id] = task
+        # Keep the open list item (if any) in line with the new name / notes.
+        item = self.open_item_for_task(task_id)
+        if item is not None:
+            item["summary"] = task["name"]
+            item["description"] = task.get("description")
+            if item["uid"] in self.notified:
+                self.notified[item["uid"]].update(
+                    summary=task["name"], description=task.get("description")
+                )
         await self._async_changed()
         return task
 

@@ -4,7 +4,7 @@
   "codeowners": ["@AzezSalami"],
   "config_flow": true,
   "dependencies": ["todo"],
-  "after_dependencies": ["mobile_app", "notify"],
+  "after_dependencies": ["frontend", "http", "mobile_app", "notify", "panel_custom", "websocket_api"],
   "documentation": "https://github.com/AzezSalami/ha-recurring-todo",
   "integration_type": "service",
   "iot_class": "local_push",

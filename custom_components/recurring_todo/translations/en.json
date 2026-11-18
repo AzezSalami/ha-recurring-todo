@@ -24,9 +24,11 @@
         "title": "Recurring to-do",
         "menu_options": {
           "add_task": "Add a recurring task",
+          "edit_task": "Edit a recurring task",
           "remove_task": "Remove recurring tasks",
           "settings": "Notification settings"
-        }
+        },
+        "description": "Tip: the Recurring To-do page in the sidebar is the easiest way to add, edit and remove tasks."
       },
       "add_task": {
         "title": "Add a recurring task",
@@ -43,9 +45,32 @@
           "notify": "Send a notification"
         }
       },
+      "edit_task": {
+        "title": "Edit a recurring task",
+        "data": {
+          "task": "Task to edit"
+        }
+      },
+      "edit_task_details": {
+        "title": "Edit “{name}”",
+        "description": "Weekly: pick the weekdays. Monthly: pick the day of the month (31 means the last day in shorter months). Interval 2 means every 2nd day/week/month.",
+        "data": {
+          "name": "Task",
+          "frequency": "Repeats",
+          "interval": "Every",
+          "weekdays": "On weekdays",
+          "day_of_month": "On day of month",
+          "time": "At time",
+          "start_date": "Starting from",
+          "description": "Notes",
+          "notify": "Send a notification"
+        }
+      },
       "remove_task": {
         "title": "Remove recurring tasks",
-        "data": { "tasks": "Tasks to remove" }
+        "data": {
+          "tasks": "Tasks to remove"
+        }
       },
       "settings": {
         "title": "Notification settings",
@@ -57,7 +82,8 @@
     },
     "error": {
       "already_exists": "A recurring task with this name already exists.",
-      "weekdays_required": "Pick at least one weekday for a weekly task."
+      "weekdays_required": "Pick at least one weekday for a weekly task.",
+      "name_required": "Give the task a name."
     },
     "abort": {
       "no_tasks": "There are no recurring tasks yet."
@@ -65,12 +91,21 @@
   },
   "selector": {
     "frequency": {
-      "options": { "daily": "Daily", "weekly": "Weekly", "monthly": "Monthly" }
+      "options": {
+        "daily": "Daily",
+        "weekly": "Weekly",
+        "monthly": "Monthly"
+      }
     },
     "weekday": {
       "options": {
-        "mon": "Monday", "tue": "Tuesday", "wed": "Wednesday", "thu": "Thursday",
-        "fri": "Friday", "sat": "Saturday", "sun": "Sunday"
+        "mon": "Monday",
+        "tue": "Tuesday",
+        "wed": "Wednesday",
+        "thu": "Thursday",
+        "fri": "Friday",
+        "sat": "Saturday",
+        "sun": "Sunday"
       }
     }
   },
@@ -79,26 +114,63 @@
       "name": "Add recurring task",
       "description": "Adds a task that is put on the list on a schedule.",
       "fields": {
-        "name": { "name": "Name", "description": "Task name." },
-        "frequency": { "name": "Frequency", "description": "daily, weekly or monthly." },
-        "interval": { "name": "Interval", "description": "Every N days/weeks/months." },
-        "weekdays": { "name": "Weekdays", "description": "For weekly tasks." },
-        "day_of_month": { "name": "Day of month", "description": "For monthly tasks." },
-        "time": { "name": "Time", "description": "Time of day the task is added." },
-        "start_date": { "name": "Start date", "description": "First possible date (defaults to today)." },
-        "description": { "name": "Notes", "description": "Description shown on the to-do item." },
-        "notify": { "name": "Notify", "description": "Send an actionable notification." }
+        "name": {
+          "name": "Name",
+          "description": "Task name."
+        },
+        "frequency": {
+          "name": "Frequency",
+          "description": "daily, weekly or monthly."
+        },
+        "interval": {
+          "name": "Interval",
+          "description": "Every N days/weeks/months."
+        },
+        "weekdays": {
+          "name": "Weekdays",
+          "description": "For weekly tasks."
+        },
+        "day_of_month": {
+          "name": "Day of month",
+          "description": "For monthly tasks."
+        },
+        "time": {
+          "name": "Time",
+          "description": "Time of day the task is added."
+        },
+        "start_date": {
+          "name": "Start date",
+          "description": "First possible date (defaults to today)."
+        },
+        "description": {
+          "name": "Notes",
+          "description": "Description shown on the to-do item."
+        },
+        "notify": {
+          "name": "Notify",
+          "description": "Send an actionable notification."
+        }
       }
     },
     "remove_task": {
       "name": "Remove recurring task",
       "description": "Stops a recurring task (existing list items stay).",
-      "fields": { "name": { "name": "Name", "description": "Task name." } }
+      "fields": {
+        "name": {
+          "name": "Name",
+          "description": "Task name."
+        }
+      }
     },
     "run_task": {
       "name": "Run recurring task now",
       "description": "Adds the task to the list and notifies now, without changing its schedule.",
-      "fields": { "name": { "name": "Name", "description": "Task name." } }
+      "fields": {
+        "name": {
+          "name": "Name",
+          "description": "Task name."
+        }
+      }
     }
   }
 }

@@ -74,6 +74,49 @@ def _clean_settings(user_input: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _task_schema() -> vol.Schema:
+    return vol.Schema(
+        {
+            vol.Required(ATTR_NAME): str,
+            vol.Required(ATTR_FREQUENCY, default=FREQ_WEEKLY): selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=FREQUENCIES, translation_key="frequency",
+                    mode=selector.SelectSelectorMode.LIST,
+                )
+            ),
+            vol.Required(ATTR_INTERVAL, default=1): selector.NumberSelector(
+                selector.NumberSelectorConfig(min=1, max=365, mode=selector.NumberSelectorMode.BOX)
+            ),
+            vol.Optional(ATTR_WEEKDAYS): selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=WEEKDAYS, multiple=True, translation_key="weekday",
+                )
+            ),
+            vol.Optional(ATTR_DAY_OF_MONTH): selector.NumberSelector(
+                selector.NumberSelectorConfig(min=1, max=31, mode=selector.NumberSelectorMode.BOX)
+            ),
+            vol.Required(ATTR_TIME, default="09:00:00"): selector.TimeSelector(),
+            vol.Optional(ATTR_START_DATE): selector.DateSelector(),
+            vol.Optional(ATTR_DESCRIPTION): str,
+            vol.Required(ATTR_NOTIFY, default=True): selector.BooleanSelector(),
+        }
+    )
+
+
+_ERROR_FIELD = {
+    "name_required": ATTR_NAME,
+    "already_exists": ATTR_NAME,
+    "weekdays_required": ATTR_WEEKDAYS,
+}
+
+
+def _task_options(manager) -> list[selector.SelectOptionDict]:
+    return [
+        selector.SelectOptionDict(value=t["task_id"], label=f"{t['name']} ({t['frequency']})")
+        for t in sorted(manager.tasks.values(), key=lambda t: t["name"].lower())
+    ]
+
+
 class RecurringTodoConfigFlow(ConfigFlow, domain=DOMAIN):
     """Create a new recurring to-do list."""
 
@@ -109,7 +152,7 @@ class RecurringTodoOptionsFlow(OptionsFlow):
     ) -> ConfigFlowResult:
         return self.async_show_menu(
             step_id="init",
-            menu_options=["add_task", "remove_task", "settings"],
+            menu_options=["add_task", "edit_task", "remove_task", "settings"],
         )
 
     async def async_step_add_task(
@@ -121,43 +164,65 @@ class RecurringTodoOptionsFlow(OptionsFlow):
             from .todo import task_to_service_dict
 
             task = task_to_service_dict(user_input)
-            if manager.find_task(task[ATTR_NAME]):
-                errors[ATTR_NAME] = "already_exists"
-            elif task[ATTR_FREQUENCY] == FREQ_WEEKLY and not task.get(ATTR_WEEKDAYS):
-                errors[ATTR_WEEKDAYS] = "weekdays_required"
+            if error := manager.validate_task(task):
+                errors[_ERROR_FIELD[error]] = error
             else:
                 await manager.async_add_task(task)
                 return self.async_create_entry(data=dict(self.config_entry.options))
 
-        schema = vol.Schema(
-            {
-                vol.Required(ATTR_NAME): str,
-                vol.Required(ATTR_FREQUENCY, default=FREQ_WEEKLY): selector.SelectSelector(
-                    selector.SelectSelectorConfig(
-                        options=FREQUENCIES, translation_key="frequency",
-                        mode=selector.SelectSelectorMode.LIST,
-                    )
-                ),
-                vol.Required(ATTR_INTERVAL, default=1): selector.NumberSelector(
-                    selector.NumberSelectorConfig(min=1, max=365, mode=selector.NumberSelectorMode.BOX)
-                ),
-                vol.Optional(ATTR_WEEKDAYS): selector.SelectSelector(
-                    selector.SelectSelectorConfig(
-                        options=WEEKDAYS, multiple=True, translation_key="weekday",
-                    )
-                ),
-                vol.Optional(ATTR_DAY_OF_MONTH): selector.NumberSelector(
-                    selector.NumberSelectorConfig(min=1, max=31, mode=selector.NumberSelectorMode.BOX)
-                ),
-                vol.Required(ATTR_TIME, default="09:00:00"): selector.TimeSelector(),
-                vol.Optional(ATTR_START_DATE): selector.DateSelector(),
-                vol.Optional(ATTR_DESCRIPTION): str,
-                vol.Required(ATTR_NOTIFY, default=True): selector.BooleanSelector(),
-            }
-        )
+        schema = _task_schema()
         if user_input is not None:
             schema = self.add_suggested_values_to_schema(schema, user_input)
         return self.async_show_form(step_id="add_task", data_schema=schema, errors=errors)
+
+    async def async_step_edit_task(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        manager = self.config_entry.runtime_data
+        if not manager.tasks:
+            return self.async_abort(reason="no_tasks")
+        if user_input is not None:
+            self._edit_id = user_input["task"]
+            return await self.async_step_edit_task_details()
+
+        schema = vol.Schema(
+            {
+                vol.Required("task"): selector.SelectSelector(
+                    selector.SelectSelectorConfig(options=_task_options(manager))
+                )
+            }
+        )
+        return self.async_show_form(step_id="edit_task", data_schema=schema)
+
+    async def async_step_edit_task_details(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        manager = self.config_entry.runtime_data
+        task_id = getattr(self, "_edit_id", None)
+        if task_id not in manager.tasks:
+            return self.async_abort(reason="no_tasks")
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            from .todo import task_to_service_dict
+
+            task = task_to_service_dict(user_input)
+            if error := manager.validate_task(task, exclude_id=task_id):
+                errors[_ERROR_FIELD[error]] = error
+            else:
+                await manager.async_update_task(task_id, task)
+                return self.async_create_entry(data=dict(self.config_entry.options))
+
+        current = manager.tasks[task_id]
+        suggested = user_input or {
+            k: v for k, v in current.items() if k not in ("task_id", "next_due") and v is not None
+        }
+        schema = self.add_suggested_values_to_schema(_task_schema(), suggested)
+        return self.async_show_form(
+            step_id="edit_task_details",
+            data_schema=schema,
+            errors=errors,
+            description_placeholders={"name": current["name"]},
+        )
 
     async def async_step_remove_task(
         self, user_input: dict[str, Any] | None = None
@@ -170,14 +235,10 @@ class RecurringTodoOptionsFlow(OptionsFlow):
                 await manager.async_remove_task(task_id)
             return self.async_create_entry(data=dict(self.config_entry.options))
 
-        options = [
-            selector.SelectOptionDict(value=t["task_id"], label=f"{t['name']} ({t['frequency']})")
-            for t in manager.tasks.values()
-        ]
         schema = vol.Schema(
             {
                 vol.Required("tasks"): selector.SelectSelector(
-                    selector.SelectSelectorConfig(options=options, multiple=True)
+                    selector.SelectSelectorConfig(options=_task_options(manager), multiple=True)
                 )
             }
         )
