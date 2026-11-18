@@ -1,14 +1,25 @@
 {
   "domain": "recurring_todo",
   "name": "Recurring To-do",
-  "codeowners": ["@AzezSalami"],
+  "codeowners": [
+    "@AzezSalami"
+  ],
   "config_flow": true,
-  "dependencies": ["todo"],
-  "after_dependencies": ["frontend", "http", "mobile_app", "notify", "panel_custom", "websocket_api"],
+  "dependencies": [
+    "todo"
+  ],
+  "after_dependencies": [
+    "frontend",
+    "http",
+    "mobile_app",
+    "notify",
+    "panel_custom",
+    "websocket_api"
+  ],
   "documentation": "https://github.com/AzezSalami/ha-recurring-todo",
   "integration_type": "service",
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/AzezSalami/ha-recurring-todo/issues",
   "requirements": [],
-  "version": "1.0.0"
+  "version": "1.0.1"
 }
