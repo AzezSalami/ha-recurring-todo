@@ -23,6 +23,7 @@ from .const import (
     ATTR_INTERVAL,
     ATTR_NAME,
     ATTR_NOTIFY,
+    ATTR_NOTIFY_SERVICES,
     ATTR_START_DATE,
     ATTR_TIME,
     ATTR_WEEKDAYS,
@@ -34,27 +35,30 @@ from .const import (
     FREQUENCIES,
     WEEKDAYS,
 )
+from .manager import available_notify_services
 
 
 def _notify_options(hass: HomeAssistant) -> list[str]:
-    services = hass.services.async_services().get("notify", {})
-    names = sorted(f"notify.{name}" for name in services if name not in ("send_message", "persistent_notification"))
     # Phones (mobile_app_*) first, they are the ones that support buttons.
-    return sorted(names, key=lambda n: (not n.startswith("notify.mobile_app_"), n))
+    return available_notify_services(hass)
+
+
+def _notify_selector(hass: HomeAssistant) -> selector.SelectSelector:
+    return selector.SelectSelector(
+        selector.SelectSelectorConfig(
+            options=_notify_options(hass),
+            multiple=True,
+            custom_value=True,
+            mode=selector.SelectSelectorMode.DROPDOWN,
+        )
+    )
 
 
 def _settings_schema(hass: HomeAssistant, defaults: dict[str, Any]) -> dict:
     return {
         vol.Optional(
             CONF_NOTIFY_SERVICES, default=defaults.get(CONF_NOTIFY_SERVICES, [])
-        ): selector.SelectSelector(
-            selector.SelectSelectorConfig(
-                options=_notify_options(hass),
-                multiple=True,
-                custom_value=True,
-                mode=selector.SelectSelectorMode.DROPDOWN,
-            )
-        ),
+        ): _notify_selector(hass),
         vol.Optional(
             CONF_LATER_MINUTES,
             default=defaults.get(CONF_LATER_MINUTES, DEFAULT_LATER_MINUTES),
@@ -74,7 +78,7 @@ def _clean_settings(user_input: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _task_schema() -> vol.Schema:
+def _task_schema(hass: HomeAssistant) -> vol.Schema:
     return vol.Schema(
         {
             vol.Required(ATTR_NAME): str,
@@ -99,6 +103,7 @@ def _task_schema() -> vol.Schema:
             vol.Optional(ATTR_START_DATE): selector.DateSelector(),
             vol.Optional(ATTR_DESCRIPTION): str,
             vol.Required(ATTR_NOTIFY, default=True): selector.BooleanSelector(),
+            vol.Optional(ATTR_NOTIFY_SERVICES): _notify_selector(hass),
         }
     )
 
@@ -170,7 +175,7 @@ class RecurringTodoOptionsFlow(OptionsFlow):
                 await manager.async_add_task(task)
                 return self.async_create_entry(data=dict(self.config_entry.options))
 
-        schema = _task_schema()
+        schema = _task_schema(self.hass)
         if user_input is not None:
             schema = self.add_suggested_values_to_schema(schema, user_input)
         return self.async_show_form(step_id="add_task", data_schema=schema, errors=errors)
@@ -216,7 +221,7 @@ class RecurringTodoOptionsFlow(OptionsFlow):
         suggested = user_input or {
             k: v for k, v in current.items() if k not in ("task_id", "next_due") and v is not None
         }
-        schema = self.add_suggested_values_to_schema(_task_schema(), suggested)
+        schema = self.add_suggested_values_to_schema(_task_schema(self.hass), suggested)
         return self.async_show_form(
             step_id="edit_task_details",
             data_schema=schema,

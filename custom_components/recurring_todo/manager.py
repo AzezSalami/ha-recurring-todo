@@ -42,6 +42,35 @@ def _new_id() -> str:
     return uuid.uuid4().hex
 
 
+def available_notify_services(hass: HomeAssistant) -> list[str]:
+    """Notify services that can be picked, phones (mobile_app_*) first."""
+    services = hass.services.async_services().get("notify", {})
+    names = sorted(
+        f"notify.{name}"
+        for name in services
+        if name not in ("send_message", "persistent_notification")
+    )
+    return sorted(names, key=lambda n: (not n.startswith("notify.mobile_app_"), n))
+
+
+def _clean_services(services: Any) -> list[str]:
+    """Return notify services as unique "notify.<name>" strings."""
+    if not services:
+        return []
+    if isinstance(services, str):
+        services = [services]
+    out: list[str] = []
+    for svc in services:
+        name = str(svc).strip()
+        if not name:
+            continue
+        if not name.startswith("notify."):
+            name = f"notify.{name}"
+        if name not in out:
+            out.append(name)
+    return out
+
+
 class RecurringTodoManager:
     """Holds the list items and recurring tasks for one config entry."""
 
@@ -67,6 +96,21 @@ class RecurringTodoManager:
     def notify_services(self) -> list[str]:
         opts = {**self.entry.data, **self.entry.options}
         return list(opts.get(CONF_NOTIFY_SERVICES, []))
+
+    def services_for_task(self, task: dict[str, Any] | None) -> list[str]:
+        """Devices a task notifies: its own choice, or the list's default."""
+        if task and task.get("notify_services"):
+            return list(task["notify_services"])
+        return self.notify_services
+
+    def services_for_item(self, item: dict[str, Any]) -> list[str]:
+        task = self.tasks.get(item.get("task_id") or "")
+        if task is not None:
+            return self.services_for_task(task)
+        sent = self.notified.get(item["uid"])
+        if sent and sent.get("services"):
+            return list(sent["services"])  # task was removed meanwhile
+        return self.notify_services
 
     @property
     def later_minutes(self) -> int:
@@ -187,6 +231,11 @@ class RecurringTodoManager:
         task.setdefault("interval", 1)
         task.setdefault("notify", True)
         task.setdefault("time", "09:00:00")
+        services = _clean_services(task.get("notify_services"))
+        if services:
+            task["notify_services"] = services
+        else:
+            task.pop("notify_services", None)  # use the list's default
         if task.get("frequency") != FREQ_WEEKLY:
             task.pop("weekdays", None)
         if task.get("frequency") != FREQ_MONTHLY:
@@ -335,14 +384,16 @@ class RecurringTodoManager:
                 ],
             },
         }
+        services = self.services_for_item(item)
         self.notified[uid] = {
             "summary": item["summary"],
             "description": item.get("description"),
             "task_id": item.get("task_id"),
+            "services": services,
         }
         while len(self.notified) > 200:
             self.notified.pop(next(iter(self.notified)))
-        for service in self.notify_services:
+        for service in services:
             name = service.removeprefix("notify.")
             try:
                 await self.hass.services.async_call(
@@ -351,8 +402,12 @@ class RecurringTodoManager:
             except Exception:  # noqa: BLE001
                 _LOGGER.exception("Failed to send notification via notify.%s", name)
 
-    async def _async_clear_notification(self, uid: str) -> None:
-        for service in self.notify_services:
+    async def _async_clear_notification(
+        self, uid: str, services: list[str] | None = None
+    ) -> None:
+        # Clear it on every phone it went to, plus the list's default ones.
+        targets = _clean_services([*(services or []), *self.notify_services])
+        for service in targets:
             name = service.removeprefix("notify.")
             if not name.startswith("mobile_app_"):
                 continue
@@ -380,10 +435,11 @@ class RecurringTodoManager:
         if item is None and sent is None:
             # Not ours (another list) or long gone.
             return
+        sent_to = list((sent or {}).get("services") or [])
         if item is None:
             if act != ACTION_LATER:
                 self.notified.pop(uid, None)
-                await self._async_clear_notification(uid)
+                await self._async_clear_notification(uid, sent_to)
                 await self._async_changed()
                 return
             # Removed from the list meanwhile: "Later" puts it back.
@@ -414,7 +470,7 @@ class RecurringTodoManager:
             return
 
         await self._async_changed()
-        await self._async_clear_notification(uid)
+        await self._async_clear_notification(uid, sent_to)
         self.hass.bus.async_fire(
             EVENT_ACTION_HANDLED,
             {

@@ -27,6 +27,7 @@ from .const import (
     ATTR_INTERVAL,
     ATTR_NAME,
     ATTR_NOTIFY,
+    ATTR_NOTIFY_SERVICES,
     ATTR_START_DATE,
     ATTR_TIME,
     ATTR_WEEKDAYS,
@@ -48,6 +49,8 @@ ADD_TASK_SCHEMA = {
     vol.Optional(ATTR_TIME, default="09:00:00"): cv.time,
     vol.Optional(ATTR_START_DATE): cv.date,
     vol.Optional(ATTR_NOTIFY, default=True): cv.boolean,
+    # Empty / left out = the list's default devices.
+    vol.Optional(ATTR_NOTIFY_SERVICES): vol.All(cv.ensure_list, [cv.string]),
     vol.Optional(ATTR_DESCRIPTION): cv.string,
 }
 TASK_KEY_SCHEMA = {vol.Required(ATTR_NAME): cv.string}
@@ -153,6 +156,7 @@ class RecurringTodoListEntity(TodoListEntity):
                     "time": t.get("time"),
                     "next_due": t.get("next_due"),
                     "notify": t.get("notify", True),
+                    "notify_services": self._manager.services_for_task(t),
                 }
                 for t in self._manager.tasks.values()
             ]

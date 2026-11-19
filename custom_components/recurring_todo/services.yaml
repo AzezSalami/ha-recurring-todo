@@ -51,6 +51,11 @@ add_task:
       default: true
       selector:
         boolean:
+    notify_services:
+      example: [notify.mobile_app_my_phone]
+      selector:
+        text:
+          multiple: true
 remove_task:
   target:
     entity:

@@ -22,6 +22,7 @@ const ICONS = {
   play: "M8,5.14V19.14L19,12.14L8,5.14Z",
   pencil: "M20.71,7.04C21.1,6.65 21.1,6 20.71,5.63L18.37,3.29C18,2.9 17.35,2.9 16.96,3.29L15.12,5.12L18.87,8.87M3,17.25V21H6.75L17.81,9.93L14.06,6.18L3,17.25Z",
   trash: "M19,4H15.5L14.5,3H9.5L8.5,4H5V6H19M6,19A2,2 0 0,0 8,21H16A2,2 0 0,0 18,19V7H6V19Z",
+  phone: "M17,19H7V5H17M17,1H7C5.89,1 5,1.89 5,3V21A2,2 0 0,0 7,23H17A2,2 0 0,0 19,21V3C19,1.89 18.1,1 17,1Z",
   sync: "M12,18A6,6 0 0,1 6,12C6,11 6.25,10.03 6.7,9.2L5.24,7.74C4.46,8.97 4,10.43 4,12A8,8 0 0,0 12,20V23L16,19L12,15M12,4V1L8,5L12,9V6A6,6 0 0,1 18,12C18,13 17.75,13.97 17.3,14.8L18.76,16.26C19.54,15.03 20,13.57 20,12A8,8 0 0,0 12,4Z",
 };
 const icon = (name) => `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${ICONS[name]}"/></svg>`;
@@ -33,6 +34,7 @@ class RecurringTodoPanel extends HTMLElement {
     this._lists = [];
     this._entryId = null;
     this._tasks = [];
+    this._targets = []; // [{service, name, phone}]
     this._loading = true;
     this._loadError = null;
     this._editing = null; // task being edited, or {} for a new one
@@ -75,7 +77,12 @@ class RecurringTodoPanel extends HTMLElement {
   // ------------------------------------------------------------ data
   async _loadLists() {
     try {
-      this._lists = await this._hass.callWS({ type: "recurring_todo/lists" });
+      const [lists, targets] = await Promise.all([
+        this._hass.callWS({ type: "recurring_todo/lists" }),
+        this._hass.callWS({ type: "recurring_todo/notify_targets" }).catch(() => []),
+      ]);
+      this._lists = lists;
+      this._targets = targets;
       const saved = this._readPref();
       const ids = this._lists.map((l) => l.entry_id);
       this._entryId = ids.includes(this._entryId) ? this._entryId : ids.includes(saved) ? saved : ids[0] || null;
@@ -176,6 +183,21 @@ class RecurringTodoPanel extends HTMLElement {
     const s = ["th", "st", "nd", "rd"];
     const v = n % 100;
     return n + (s[(v - 20) % 10] || s[v] || s[0]);
+  }
+
+  _targetName(service) {
+    const t = this._targets.find((x) => x.service === service);
+    if (t) return t.name;
+    const n = service.replace(/^notify\./, "").replace(/^mobile_app_/, "").replace(/_/g, " ");
+    return n.charAt(0).toUpperCase() + n.slice(1);
+  }
+
+  _targetsText(services) {
+    return services?.length ? this._joinList(services.map((s) => this._targetName(s))) : "no devices";
+  }
+
+  _defaultServices() {
+    return this._currentList()?.notify_services || [];
   }
 
   _scheduleText(t) {
@@ -310,6 +332,13 @@ class RecurringTodoPanel extends HTMLElement {
         <div class="schedule">${icon("sync")}<span>${esc(this._scheduleText(t))}</span></div>
         <div class="next ${soon ? "soon" : ""}"><span class="label">Next</span>
           <span>${esc(next.abs)}</span>${next.rel ? `<span class="muted">· ${esc(next.rel)}</span>` : ""}</div>
+        ${
+          t.notify
+            ? `<div class="targets">${icon("phone")}<span>${esc(
+                this._targetsText(t.notify_services?.length ? t.notify_services : this._defaultServices())
+              )}${t.notify_services?.length ? "" : ' <span class="muted">(list default)</span>'}</span></div>`
+            : ""
+        }
         ${t.description ? `<p class="notes">${esc(t.description)}</p>` : ""}
         <div class="actions">
           <button class="btn text" data-action="run" data-id="${esc(t.task_id)}" title="Put it on the list and notify now. The schedule doesn't change.">${icon("play")}<span>Run now</span></button>
@@ -408,6 +437,8 @@ class RecurringTodoPanel extends HTMLElement {
           start_date: task.start_date || "",
           description: task.description || "",
           notify: task.notify !== false,
+          notify_services: [...(task.notify_services || [])],
+          custom_targets: !!task.notify_services?.length,
         }
       : {
           name: "",
@@ -419,6 +450,8 @@ class RecurringTodoPanel extends HTMLElement {
           start_date: "",
           description: "",
           notify: true,
+          notify_services: [],
+          custom_targets: false,
         };
     this._renderEditor();
     const dlg = this.shadowRoot.querySelector(".editor");
@@ -509,6 +542,7 @@ class RecurringTodoPanel extends HTMLElement {
           </span>
           <input name="notify" type="checkbox" class="switch" ${f.notify ? "checked" : ""}>
         </label>
+        ${f.notify ? this._targetsField(f) : ""}
 
         <div class="preview" aria-live="polite">${icon("sync")}<span>${esc(this._scheduleText({ ...f, weekdays: f.weekdays }))}</span></div>
         <div class="error" role="alert" ${this._formError ? "" : "hidden"}>${esc(this._formError || "")}</div>
@@ -531,11 +565,61 @@ class RecurringTodoPanel extends HTMLElement {
     });
   }
 
+  _targetsField(f) {
+    const defaults = this._defaultServices();
+    // Devices that can be picked, plus any saved ones that no longer exist.
+    const known = this._targets.map((t) => t.service);
+    const all = [...known, ...f.notify_services.filter((s) => !known.includes(s))];
+    let body;
+    if (!f.custom_targets) {
+      body = `<p class="hint">${
+        defaults.length
+          ? `Goes to ${esc(this._targetsText(defaults))}, as set for this list.`
+          : "This list has no devices set. Choose devices here, or set them in the list's settings."
+      }</p>`;
+    } else if (!all.length) {
+      body = `<p class="hint">No notify services found in Home Assistant.</p>`;
+    } else {
+      body = `<div class="target-list" role="group" aria-labelledby="lbl-targets">${all
+        .map(
+          (svc) => `<label class="target">
+            <input type="checkbox" data-service="${esc(svc)}" ${f.notify_services.includes(svc) ? "checked" : ""}>
+            <span>${esc(this._targetName(svc))}</span>
+            <span class="muted svc">${esc(svc)}</span>
+          </label>`
+        )
+        .join("")}</div>
+        <p class="hint">Done / Later / Not doing buttons only show on phones with the Companion app.</p>`;
+    }
+    return `
+      <div class="field targets-field">
+        <span class="field-label" id="lbl-targets">Send to</span>
+        <div class="segmented" role="radiogroup" aria-labelledby="lbl-targets">
+          <button type="button" role="radio" aria-checked="${!f.custom_targets}" class="${f.custom_targets ? "" : "on"}" data-targets="default">List default</button>
+          <button type="button" role="radio" aria-checked="${f.custom_targets}" class="${f.custom_targets ? "on" : ""}" data-targets="custom">Choose devices</button>
+        </div>
+        ${body}
+      </div>`;
+  }
+
   _onFormInput(e) {
     const el = e.target;
+    if (el.dataset?.service) {
+      if (e.type !== "change") return;
+      const set = new Set(this._form.notify_services);
+      el.checked ? set.add(el.dataset.service) : set.delete(el.dataset.service);
+      this._form.notify_services = [...set];
+      if (this._formError) this._setFormError(null);
+      return;
+    }
     if (!el.name) return;
     this._form[el.name] = el.type === "checkbox" ? el.checked : el.value;
     if (this._formError) this._setFormError(null);
+    if (el.name === "notify" && e.type === "change") {
+      this._renderEditor();
+      this.shadowRoot.querySelector('.editor input[name="notify"]')?.focus();
+      return;
+    }
     if (el.name === "interval") {
       const unitEl = el.parentElement.querySelector(".unit");
       if (unitEl) unitEl.textContent = FREQ_UNIT[this._form.frequency][Number(el.value) === 1 ? 0 : 1];
@@ -553,6 +637,14 @@ class RecurringTodoPanel extends HTMLElement {
       this._formError = null;
       this._renderEditor();
       this.shadowRoot.querySelector(`[data-freq="${t.dataset.freq}"]`)?.focus();
+    } else if (t.dataset.targets) {
+      this._form.custom_targets = t.dataset.targets === "custom";
+      if (this._form.custom_targets && !this._form.notify_services.length) {
+        this._form.notify_services = [...this._defaultServices()]; // start from the list's choice
+      }
+      this._formError = null;
+      this._renderEditor();
+      this.shadowRoot.querySelector(`[data-targets="${t.dataset.targets}"]`)?.focus();
     } else if (t.dataset.day) {
       const d = t.dataset.day;
       const set = new Set(this._form.weekdays);
@@ -589,12 +681,15 @@ class RecurringTodoPanel extends HTMLElement {
     if (f.frequency === "weekly" && !f.weekdays.length) return this._setFormError(ERRORS.weekdays_required);
     if (f.frequency === "monthly" && !(dom >= 1 && dom <= 31)) return this._setFormError("Pick a day of the month from 1 to 31.");
     if (!f.time) return this._setFormError("Pick a time.");
+    if (f.notify && f.custom_targets && !f.notify_services.length)
+      return this._setFormError("Pick at least one device, or use the list default.");
 
     const task = { name, frequency: f.frequency, interval, time: f.time, notify: !!f.notify };
     if (f.frequency === "weekly") task.weekdays = f.weekdays;
     if (f.frequency === "monthly") task.day_of_month = dom;
     if (f.start_date) task.start_date = f.start_date;
     if (f.description.trim()) task.description = f.description.trim();
+    if (f.notify && f.custom_targets) task.notify_services = f.notify_services;
 
     const editingId = this._editing?.task_id;
     const submit = this.shadowRoot.querySelector('.editor button[type="submit"]');
@@ -715,6 +810,16 @@ const STYLES = `
     background: var(--rt-input-bg); color: var(--rt-muted);
   }
   .next.soon .label { background: color-mix(in srgb, var(--rt-primary) 18%, transparent); color: var(--rt-primary); }
+  .targets { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--rt-muted); }
+  .targets svg { width: 16px; height: 16px; }
+  .targets > span { overflow-wrap: anywhere; }
+  .targets-field { margin-top: -4px; }
+  .targets-field .hint { margin: 0; }
+  .target-list { display: flex; flex-direction: column; border: 1px solid var(--rt-divider); border-radius: 12px; overflow: hidden; }
+  .target { display: flex; align-items: center; gap: 12px; padding: 10px 12px; cursor: pointer; min-height: 44px; }
+  .target + .target { border-top: 1px solid var(--rt-divider); }
+  .target input { width: 18px; height: 18px; margin: 0; accent-color: var(--rt-primary); flex: none; }
+  .target .svc { margin-left: auto; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
   .notes { margin: 0; font-size: 13px; color: var(--rt-muted); white-space: pre-wrap; overflow-wrap: anywhere; }
   .actions { display: flex; align-items: center; margin-top: auto; padding-top: 4px; border-top: 1px solid var(--rt-divider); margin-left: -8px; margin-right: -8px; }
   .actions .spacer { flex: 1; }

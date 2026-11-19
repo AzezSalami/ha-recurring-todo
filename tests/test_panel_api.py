@@ -18,7 +18,8 @@ async def test_ws_create_edit_run_delete(hass: HomeAssistant, entry, hass_ws_cli
     r = await _ws(client, {"type": f"{DOMAIN}/lists"})
     assert r["success"]
     assert r["result"] == [
-        {"entry_id": entry.entry_id, "title": "Chores", "entity_id": ENTITY, "task_count": 0}
+        {"entry_id": entry.entry_id, "title": "Chores", "entity_id": ENTITY, "task_count": 0,
+         "notify_services": ["notify.mobile_app_phone"]}
     ]
 
     # Create
@@ -118,3 +119,71 @@ async def test_options_flow_edit(hass: HomeAssistant, entry):
     assert t["frequency"] == "weekly" and "day_of_month" not in t
     assert t["next_due"].startswith("2026-11-21T10:00")
     assert hass.states.get(ENTITY).attributes["recurring_tasks"][0]["frequency"] == "weekly"
+
+
+async def test_per_task_devices(hass: HomeAssistant, entry, notify_calls, hass_ws_client):
+    """A task can notify its own devices instead of the list's default."""
+    from pytest_homeassistant_custom_component.common import async_mock_service
+
+    tablet_calls = async_mock_service(hass, "notify", "mobile_app_tablet")
+    manager = entry.runtime_data
+    client = await hass_ws_client(hass)
+
+    r = await _ws(client, {"type": f"{DOMAIN}/notify_targets"})
+    services = [t["service"] for t in r["result"]]
+    assert "notify.mobile_app_phone" in services and "notify.mobile_app_tablet" in services
+
+    # Own devices (prefix optional, duplicates dropped)
+    r = await _ws(client, {
+        "type": f"{DOMAIN}/task/create", "entry_id": entry.entry_id,
+        "task": {"name": "Feed cat", "frequency": "daily",
+                 "notify_services": ["mobile_app_tablet", "notify.mobile_app_tablet"]},
+    })
+    assert r["result"]["notify_services"] == ["notify.mobile_app_tablet"]
+    cat = r["result"]["task_id"]
+    # No devices given -> list default
+    r = await _ws(client, {
+        "type": f"{DOMAIN}/task/create", "entry_id": entry.entry_id,
+        "task": {"name": "Dishes", "frequency": "daily"},
+    })
+    assert r["result"]["notify_services"] == []
+    dishes = r["result"]["task_id"]
+
+    await manager.async_run_task(cat)
+    await hass.async_block_till_done()
+    assert [c.data["message"] for c in tablet_calls] == ["Feed cat"]
+    assert notify_calls == []
+
+    await manager.async_run_task(dishes)
+    await hass.async_block_till_done()
+    assert [c.data["message"] for c in notify_calls] == ["Dishes"]
+    assert len(tablet_calls) == 1
+
+    attrs = hass.states.get(ENTITY).attributes["recurring_tasks"]
+    by_name = {t["name"]: t["notify_services"] for t in attrs}
+    assert by_name == {"Feed cat": ["notify.mobile_app_tablet"], "Dishes": ["notify.mobile_app_phone"]}
+
+    # Done on the tablet clears it there too
+    done = tablet_calls[0].data["data"]["actions"][0]["action"]
+    hass.bus.async_fire("mobile_app_notification_action", {"action": done})
+    await hass.async_block_till_done()
+    assert tablet_calls[-1].data["message"] == "clear_notification"
+
+    # Editing back to the default
+    r = await _ws(client, {
+        "type": f"{DOMAIN}/task/update", "entry_id": entry.entry_id, "task_id": cat,
+        "task": {"name": "Feed cat", "frequency": "daily", "notify_services": []},
+    })
+    assert r["result"]["notify_services"] == []
+    assert manager.services_for_task(manager.tasks[cat]) == ["notify.mobile_app_phone"]
+
+
+async def test_add_task_service_with_devices(hass: HomeAssistant, entry):
+    resp = await hass.services.async_call(
+        DOMAIN, "add_task",
+        {"entity_id": ENTITY, "name": "Bins", "frequency": "weekly", "weekdays": ["mon"],
+         "notify_services": "notify.mobile_app_tablet"},
+        blocking=True, return_response=True,
+    )
+    tid = resp[ENTITY]["task_id"]
+    assert entry.runtime_data.tasks[tid]["notify_services"] == ["notify.mobile_app_tablet"]

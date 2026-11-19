@@ -10,9 +10,10 @@ from homeassistant.components import websocket_api
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
+from homeassistant.util import slugify
 
 from .const import DOMAIN
-from .manager import RecurringTodoManager
+from .manager import RecurringTodoManager, available_notify_services
 from .todo import ADD_TASK_SCHEMA, task_to_service_dict
 
 TASK_SCHEMA = vol.Schema(ADD_TASK_SCHEMA)
@@ -22,6 +23,7 @@ TASK_SCHEMA = vol.Schema(ADD_TASK_SCHEMA)
 def async_register(hass: HomeAssistant) -> None:
     """Register the WebSocket commands."""
     websocket_api.async_register_command(hass, ws_lists)
+    websocket_api.async_register_command(hass, ws_notify_targets)
     websocket_api.async_register_command(hass, ws_tasks)
     websocket_api.async_register_command(hass, ws_create_task)
     websocket_api.async_register_command(hass, ws_update_task)
@@ -49,6 +51,8 @@ def _task_out(task: dict[str, Any]) -> dict[str, Any]:
         "start_date": task.get("start_date"),
         "description": task.get("description"),
         "notify": task.get("notify", True),
+        # Empty = the list's default devices.
+        "notify_services": task.get("notify_services") or [],
         "next_due": task.get("next_due"),
     }
 
@@ -64,11 +68,37 @@ def ws_lists(hass: HomeAssistant, connection, msg: dict[str, Any]) -> None:
             "title": entry.title,
             "entity_id": registry.async_get_entity_id("todo", DOMAIN, entry.entry_id),
             "task_count": len(entry.runtime_data.tasks),
+            "notify_services": entry.runtime_data.notify_services,
         }
         for entry in hass.config_entries.async_entries(DOMAIN)
         if entry.state is ConfigEntryState.LOADED
     ]
     connection.send_result(msg["id"], sorted(lists, key=lambda x: x["title"].lower()))
+
+
+@websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/notify_targets"})
+@callback
+def ws_notify_targets(hass: HomeAssistant, connection, msg: dict[str, Any]) -> None:
+    """Notify services that can receive notifications, with readable names."""
+    phones = {}
+    for entry in hass.config_entries.async_entries("mobile_app"):
+        device = entry.data.get("device_name") or entry.title
+        if device:
+            phones[f"notify.mobile_app_{slugify(device)}"] = device
+    targets = [
+        {
+            "service": svc,
+            "name": phones.get(svc) or _pretty(svc),
+            "phone": svc.startswith("notify.mobile_app_"),
+        }
+        for svc in available_notify_services(hass)
+    ]
+    connection.send_result(msg["id"], targets)
+
+
+def _pretty(service: str) -> str:
+    name = service.removeprefix("notify.").removeprefix("mobile_app_")
+    return name.replace("_", " ").strip().capitalize() or service
 
 
 @websocket_api.websocket_command(

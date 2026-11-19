@@ -17,6 +17,7 @@ ATTR_DAY_OF_MONTH = "day_of_month"
 ATTR_TIME = "time"
 ATTR_START_DATE = "start_date"
 ATTR_NOTIFY = "notify"
+ATTR_NOTIFY_SERVICES = "notify_services"
 ATTR_DESCRIPTION = "description"
 
 FREQ_DAILY = "daily"

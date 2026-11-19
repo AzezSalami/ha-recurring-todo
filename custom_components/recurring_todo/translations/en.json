@@ -42,7 +42,11 @@
           "time": "At time",
           "start_date": "Starting from",
           "description": "Notes",
-          "notify": "Send a notification"
+          "notify": "Send a notification",
+          "notify_services": "Send to"
+        },
+        "data_description": {
+          "notify_services": "Leave empty to use this list's devices. Pick devices to send this task only to them."
         }
       },
       "edit_task": {
@@ -63,7 +67,11 @@
           "time": "At time",
           "start_date": "Starting from",
           "description": "Notes",
-          "notify": "Send a notification"
+          "notify": "Send a notification",
+          "notify_services": "Send to"
+        },
+        "data_description": {
+          "notify_services": "Leave empty to use this list's devices. Pick devices to send this task only to them."
         }
       },
       "remove_task": {
@@ -149,6 +157,10 @@
         "notify": {
           "name": "Notify",
           "description": "Send an actionable notification."
+        },
+        "notify_services": {
+          "name": "Send to",
+          "description": "Notify services for this task, e.g. notify.mobile_app_my_phone. Leave out to use the list's devices."
         }
       }
     },
