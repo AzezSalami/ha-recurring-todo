@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="custom_components/recurring_todo/brand/dark_logo@2x.png">
+    <img src="custom_components/recurring_todo/brand/logo@2x.png" alt="Recurring To-do" height="128">
+  </picture>
+</p>
+
 # Recurring To-do for Home Assistant
 
 A to-do list for Home Assistant whose recurring tasks (daily / weekly / monthly) are added automatically and sent to your phone with three buttons:
