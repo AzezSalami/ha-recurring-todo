@@ -48,7 +48,18 @@ What the fields mean:
 - **Starting from**: optional first date. For "every 2 weeks" or "every 3 months" it decides which weeks or months count.
 - **Send to**: *List default* sends to the devices you picked when you set up the list. *Choose devices* sends this task only to the devices you tick, e.g. the cat-feeding reminder to one phone and the bins to everyone. Each card shows where its notifications go.
 
-### From Settings
+### Who did what: the History tab
+The **History** tab on the Recurring To-do page lists every press of **Done**, **Later** and **Not doing**, newest first and grouped by day:
+
+- who pressed it (the Home Assistant user the phone is signed in as),
+- which phone, when the Companion app sends it (iOS does; Android doesn't),
+- when, and how long after the notification (or the last "Later" reminder),
+- whether the item had already been removed from the list.
+
+Filter by Done / Later / Not doing, and see how quickly reminders are usually answered. The tab updates live. Admins can clear the history. Each list keeps its last 1000 presses.
+
+The presses also show up in Home Assistant's own **Logbook**, e.g. "Anna marked “Water plants” as done on Anna's iPhone".
+
 **Settings → Devices & Services → Recurring To-do → Configure** has the same options as plain forms: **Add**, **Edit**, **Remove** recurring tasks, and the notification settings.
 
 ### From automations / scripts
@@ -100,5 +111,5 @@ Other actions:
 - When someone presses a button, the notification is cleared on every device it was sent to.
 - If a task comes due while the previous one is still open, no duplicate is added. You just get reminded again.
 - If Home Assistant was off when a task was due, the task is added as soon as Home Assistant starts again.
-- Each button press fires a `recurring_todo_action` event (`action`: `done` / `later` / `skip`, `item`, `uid`), so you can build your own automations on top, e.g. a reward or a log.
+- Each button press fires a `recurring_todo_action` event (`action`: `done` / `later` / `skip`, `item`, `uid`, `task_id`, `entity_id`, `user`, `user_id`, `device`), so you can build your own automations on top, e.g. a reward.
 - All data is stored locally in `.storage/recurring_todo.<entry_id>`.

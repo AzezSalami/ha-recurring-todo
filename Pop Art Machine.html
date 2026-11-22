@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pop Art Machine</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bangers&family=Work+Sans:wght@400;600;800&display=swap" rel="stylesheet">
+<style>
+/* VOICE: loud, playful, confident — a 1960s print shop
+   IDEA: a silkscreen press / comic page: thick ink outlines, Ben-Day dots, flat fields
+   PICTURE: the converted image itself, framed like a comic panel with a hard offset shadow
+   COLOUR and TYPE: process yellow ground, black ink, magenta accent; Bangers titles, Work Sans body
+   LAYOUT: modest title strip, big panel left, control column right; stacks below 900px */
+:root{color-scheme:light dark;
+ --bg:light-dark(#ffe600,#16130e);--ink:light-dark(#111,#fff7d6);--paper:light-dark(#fffdf2,#24201a);
+ --line:light-dark(#111,#fff7d6);--acc:#ff2d8a;--dot:light-dark(rgba(0,0,0,.09),rgba(255,230,0,.08))}
+:root[data-theme=light]{color-scheme:light}:root[data-theme=dark]{color-scheme:dark}
+*{box-sizing:border-box;min-width:0}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.55 "Work Sans",system-ui,sans-serif;overflow-x:clip;
+ background-image:radial-gradient(var(--dot) 28%,transparent 30%);background-size:14px 14px}
+.band{padding:clamp(18px,3vw,40px) max(4vw,16px)}
+header{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 18px;padding-bottom:0}
+h1{font:400 clamp(38px,6vw,56px)/1.05 Bangers,Impact,sans-serif;letter-spacing:.02em;margin:0;text-wrap:balance}
+h1 span{display:inline-block;background:var(--acc);color:#fff;padding:0 .18em;transform:rotate(-2deg);border:3px solid var(--line);box-shadow:4px 4px 0 var(--line)}
+header p{margin:0;font-weight:600;max-width:52ch}
+main{display:grid;grid-template-columns:minmax(0,1.9fr) minmax(0,1fr);gap:clamp(16px,2.5vw,32px);max-width:1240px;margin:0 auto;align-items:start}
+@media(max-width:900px){main{grid-template-columns:minmax(0,1fr)}}
+.stage{position:relative;background:var(--paper);border:4px solid var(--line);box-shadow:10px 10px 0 var(--line);padding:12px;min-height:280px;display:grid;place-items:center}
+.stage canvas{display:block;width:100%;height:auto;max-height:76vh;object-fit:contain;image-rendering:auto}
+.stage.drag{outline:6px dashed var(--acc);outline-offset:6px}
+.tag{position:absolute;top:-16px;left:14px;background:#fff;color:#111;border:3px solid #111;font:400 18px/1 Bangers,Impact,sans-serif;padding:5px 10px 3px;letter-spacing:.04em}
+.note{font-size:13px;margin:14px 2px 0;opacity:.8}
+.panel{background:var(--paper);border:4px solid var(--line);box-shadow:8px 8px 0 var(--line);padding:18px;display:grid;gap:18px}
+.panel h2{font:400 22px/1 Bangers,Impact,sans-serif;letter-spacing:.04em;margin:0 0 8px}
+.seg{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));border:3px solid var(--line)}
+.seg button{border:0;border-inline-start:3px solid var(--line);background:transparent;color:var(--ink);font:800 14px/1.2 "Work Sans",sans-serif;min-height:46px;cursor:pointer;padding:6px}
+.seg button:first-child{border-inline-start:0}
+.seg button[aria-pressed=true]{background:var(--acc);color:#fff}
+.pals{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.pals button{display:flex;height:44px;border:3px solid var(--line);padding:0;cursor:pointer;background:none}
+.pals button i{flex:1}
+.pals button[aria-pressed=true]{box-shadow:0 0 0 3px var(--bg),0 0 0 6px var(--acc)}
+label.r{display:grid;grid-template-columns:1fr auto;gap:2px 10px;font-weight:600;font-size:15px}
+label.r output{font-variant-numeric:tabular-nums}
+input[type=range]{grid-column:1/-1;width:100%;accent-color:var(--acc);height:28px}
+.btns{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.btn{display:flex;align-items:center;justify-content:center;min-height:48px;border:3px solid var(--line);background:var(--bg);color:var(--ink);font:400 20px/1 Bangers,Impact,sans-serif;letter-spacing:.05em;cursor:pointer;box-shadow:4px 4px 0 var(--line);text-align:center;padding:6px 10px;user-select:none;-webkit-user-select:none;touch-action:none}
+.btn.big{grid-column:1/-1;background:var(--acc);color:#fff}
+.btn:active{transform:translate(3px,3px);box-shadow:1px 1px 0 var(--line)}
+.btn:focus-visible,.seg button:focus-visible,.pals button:focus-visible,input:focus-visible{outline:3px solid var(--acc);outline-offset:3px}
+.btn[hidden]{display:none}
+#file{position:absolute;width:1px;height:1px;opacity:0}
+.dim{opacity:.4;pointer-events:none}
+.tog{display:flex;align-items:center;gap:10px;font-weight:600;min-height:44px;cursor:pointer;margin-bottom:8px}
+.tog input{width:24px;height:24px;accent-color:var(--acc);margin:0}
+.picks{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:12px}
+.picks label{display:grid;gap:4px;font-size:13px;font-weight:600;text-align:center}
+.picks input{width:100%;height:44px;border:3px solid var(--line);padding:0;background:none;cursor:pointer}
+#sheet{position:fixed;inset:0;background:rgba(0,0,0,.8);display:none;place-items:center;padding:16px;z-index:9}
+#sheet.on{display:grid}
+#sheet div{background:var(--paper);border:4px solid var(--line);padding:14px;max-width:min(92vw,900px);display:grid;gap:10px;text-align:center;font-weight:600}
+#sheet img{max-width:100%;max-height:70vh;margin:auto;display:block}
+#msg{min-height:1.4em;font-size:14px;font-weight:600;margin:0}
+footer{text-align:center;font-size:13px;padding-top:0;opacity:.75}
+@media(prefers-reduced-motion:no-preference){.stage canvas{transition:opacity .25s}.stage.busy canvas{opacity:.55}}
+</style>
+</head>
+<body>
+<header class="band"><h1><span>POW!</span> Pop Art Machine</h1><p>Drop in any photo and print it as a Warhol grid, a comic panel or a bold poster.</p></header>
+<div class="band">
+<main>
+ <section>
+  <div class="stage" id="stage"><div class="tag" id="tagline">Sample still life</div><canvas id="out" aria-label="Pop art result"></canvas></div>
+  <p class="note">Everything runs in your browser — photos never leave your device. Drag a picture onto the panel, or use “Choose photo”.</p>
+ </section>
+ <aside class="panel">
+  <div class="btns">
+   <label class="btn big" for="file" tabindex="0" id="pick">Choose photo</label>
+   <input type="file" id="file" accept="image/*">
+  </div>
+  <div><h2>Style</h2>
+   <div class="seg" role="group" aria-label="Style">
+    <button data-s="warhol" aria-pressed="true">Warhol grid</button>
+    <button data-s="comic" aria-pressed="false">Comic dots</button>
+    <button data-s="poster" aria-pressed="false">Poster</button>
+   </div></div>
+  <div><h2>Colours</h2>
+   <label class="tog"><input type="checkbox" id="orig"> Keep original colours</label>
+   <div id="palBox"><div class="pals" id="pals" role="group" aria-label="Palette"></div>
+   <div class="picks">
+    <label>Darkest<input type="color" data-c="0"></label><label>Dark<input type="color" data-c="1"></label>
+    <label>Mid<input type="color" data-c="2"></label><label>Lightest<input type="color" data-c="3"></label>
+   </div></div></div>
+  <label class="r">Colour levels <output id="vLev">3</output><input type="range" id="lev" min="2" max="4" step="1" value="3"></label>
+  <label class="r">Contrast <output id="vCon">1.3</output><input type="range" id="con" min="0.6" max="2.4" step="0.1" value="1.3"></label>
+  <label class="r">Ink outlines <output id="vOut">55</output><input type="range" id="outl" min="0" max="100" step="1" value="55"></label>
+  <label class="r" id="dotRow">Dot size <output id="vDot">8</output><input type="range" id="dot" min="4" max="20" step="1" value="8"></label>
+  <div class="btns">
+   <button class="btn" id="cmp">Hold: original</button>
+   <button class="btn" id="shuf">Shuffle</button>
+   <button class="btn big" id="save">Download image</button>
+  </div>
+  <p id="msg" role="status">Pick a preset, then tap any colour box to change it.</p>
+ </aside>
+</main>
+</div>
+<div id="sheet" role="dialog" aria-label="Save image"><div><img id="sheetImg" alt="Your pop art"><span>Press and hold (or right-click) the picture and choose “Save image”.</span><button class="btn" id="sheetX">Close</button></div></div>
+<footer class="band">Made for fun — a quick silkscreen in your pocket.</footer>
+<script>
+{
+const PRESETS=[
+ ['#111111','#e4007c','#ffde00','#ffffff'],
+ ['#1b1464','#00a99d','#ff7bac','#fff200'],
+ ['#2a0a3d','#ff3b30','#ff9500','#c7f464'],
+ ['#0b0b0b','#0057ff','#ff2d55','#ffe600'],
+ ['#3d0c02','#00b3a4','#ffb3c6','#f5f5dc'],
+ ['#14213d','#fca311','#e5e5e5','#ff6bd6']
+];
+let PALS=PRESETS.map(p=>p.slice());
+const $=id=>document.getElementById(id);
+const out=$('out'),stage=$('stage'),msg=$('msg');
+const st={orig:false,style:'warhol',pal:0,lev:3,con:1.3,outl:55,dot:8,rot:0};
+let src=null,base=null,R,G,Bl,showOrig=false,raf=0;
+
+const picks=[...document.querySelectorAll('.picks input')];
+function drawPals(){$('pals').innerHTML=PALS.map((p,i)=>`<button data-p="${i}" aria-pressed="${i===st.pal}" aria-label="Palette ${i+1}">${p.map(c=>`<i style="background:${c}"></i>`).join('')}</button>`).join('');
+ picks.forEach((inp,k)=>inp.value=PALS[st.pal][k])}
+drawPals();
+
+const rgb=h=>[1,3,5].map(i=>parseInt(h.slice(i,i+2),16));
+
+function setSource(img,label){
+ const max=720,sc=Math.min(1,max/Math.max(img.width,img.height));
+ const w=Math.max(1,Math.round(img.width*sc)),h=Math.max(1,Math.round(img.height*sc));
+ src=document.createElement('canvas');src.width=w;src.height=h;
+ const c=src.getContext('2d');c.fillStyle='#fff';c.fillRect(0,0,w,h);c.drawImage(img,0,0,w,h);
+ const d=c.getImageData(0,0,w,h).data,n=w*h;base=new Float32Array(n);R=new Float32Array(n);G=new Float32Array(n);Bl=new Float32Array(n);
+ for(let i=0;i<n;i++){R[i]=d[i*4]/255;G[i]=d[i*4+1]/255;Bl[i]=d[i*4+2]/255;base[i]=0.299*R[i]+0.587*G[i]+0.114*Bl[i]}
+ $('tagline').textContent=label;queue();
+}
+
+function prep(){
+ const w=src.width,h=src.height,n=w*h,L=new Float32Array(n),B=new Float32Array(n),E=new Uint8Array(n);
+ for(let i=0;i<n;i++){let v=(base[i]-0.5)*st.con+0.5;L[i]=v<0?0:v>1?1:v}
+ for(let y=0;y<h;y++)for(let x=0;x<w;x++){let s=0,k=0;
+  for(let dy=-1;dy<=1;dy++){const yy=y+dy;if(yy<0||yy>=h)continue;
+   for(let dx=-1;dx<=1;dx++){const xx=x+dx;if(xx<0||xx>=w)continue;s+=L[yy*w+xx];k++}}
+  B[y*w+x]=s/k}
+ if(st.outl>0){const t=1.25-st.outl/100*1.1;
+  for(let y=1;y<h-1;y++)for(let x=1;x<w-1;x++){const i=y*w+x;
+   const gx=B[i-w+1]+2*B[i+1]+B[i+w+1]-B[i-w-1]-2*B[i-1]-B[i+w-1];
+   const gy=B[i+w-1]+2*B[i+w]+B[i+w+1]-B[i-w-1]-2*B[i-w]-B[i-w+1];
+   if(Math.sqrt(gx*gx+gy*gy)>t)E[i]=1}}
+ return{w,h,L,B,E};
+}
+
+function idxMap(n){return Array.from({length:n},(_,i)=>Math.round(i*3/(n-1)))}
+
+function poster(P,pal,n,ctx,ox,oy){
+ const {w,h,B,E}=P,img=ctx.createImageData(w,h),d=img.data,cols=pal.map(rgb),map=idxMap(n),ink=[17,17,17];
+ for(let i=0;i<w*h;i++){const c=E[i]?ink:cols[map[Math.min(n-1,Math.floor(B[i]*n))]];
+  d[i*4]=c[0];d[i*4+1]=c[1];d[i*4+2]=c[2];d[i*4+3]=255}
+ ctx.putImageData(img,ox,oy);
+}
+
+function comic(P,pal,ctx){
+ const {w,h,B,E}=P,cols=pal.map(rgb),img=ctx.createImageData(w,h),d=img.data;
+ const n=st.lev,th=n===2?[0.42]:n===3?[0.3,0.62]:[0.25,0.48,0.7];
+ const fill=n===2?[cols[0],cols[3]]:n===3?[cols[0],cols[2],cols[3]]:[cols[0],cols[1],cols[2],cols[3]];
+ const lvl=v=>{let k=0;while(k<th.length&&v>th[k])k++;return k};
+ for(let i=0;i<w*h;i++){const c=fill[lvl(B[i])];d[i*4]=c[0];d[i*4+1]=c[1];d[i*4+2]=c[2];d[i*4+3]=255}
+ ctx.putImageData(img,0,0);
+ const cs=st.dot,dc=n===4?pal[0]:pal[1];ctx.fillStyle=dc;ctx.globalAlpha=n===4?0.55:1;
+ for(let y=0,row=0;y<h+cs;y+=cs*0.866,row++){for(let x=(row%2)*cs/2;x<w+cs;x+=cs){
+  const xi=Math.min(w-1,x|0),yi=Math.min(h-1,y|0),v=B[yi*w+xi];if(lvl(v)===0)continue;
+  const r=cs*0.58*Math.sqrt(Math.max(0,1-v)*0.95+0.05);
+  ctx.beginPath();ctx.arc(x,y,r,0,6.2832);ctx.fill()}}
+ ctx.globalAlpha=1;edges(P,ctx,0,0);
+}
+
+const cl=v=>v<0?0:v>1?1:v;
+function hueM(deg){const a=deg*Math.PI/180,c=Math.cos(a),s=Math.sin(a);
+ return[.213+c*.787-s*.213,.715-c*.715-s*.715,.072-c*.072+s*.928,.213-c*.213+s*.143,.715+c*.285+s*.14,.072-c*.072-s*.283,.213-c*.213-s*.787,.715-c*.715+s*.715,.072+c*.928+s*.072]}
+function origCol(i,m,dark){
+ let r=(R[i]-.5)*st.con+.5,g=(G[i]-.5)*st.con+.5,b=(Bl[i]-.5)*st.con+.5;
+ const y=.299*r+.587*g+.114*b;r=y+(r-y)*1.5;g=y+(g-y)*1.5;b=y+(b-y)*1.5;
+ if(m){const a=r,c=g;r=m[0]*a+m[1]*c+m[2]*b;g=m[3]*a+m[4]*c+m[5]*b;b=m[6]*a+m[7]*c+m[8]*b}
+ const q=st.lev,f=dark||1;
+ return[r,g,b].map(v=>Math.round(Math.round(cl(v)*q)/q*f*255));
+}
+function edges(P,ctx,ox,oy){const {w,h,E}=P,e=document.createElement('canvas');e.width=w;e.height=h;const ec=e.getContext('2d'),ei=ec.createImageData(w,h);
+ for(let i=0;i<w*h;i++)if(E[i]){ei.data[i*4]=ei.data[i*4+1]=ei.data[i*4+2]=17;ei.data[i*4+3]=255}
+ ec.putImageData(ei,0,0);ctx.drawImage(e,ox,oy)}
+function posterOrig(P,ctx,ox,oy,deg){const {w,h}=P,img=ctx.createImageData(w,h),d=img.data,m=deg?hueM(deg):null;
+ for(let i=0;i<w*h;i++){const c=origCol(i,m);d[i*4]=c[0];d[i*4+1]=c[1];d[i*4+2]=c[2];d[i*4+3]=255}
+ ctx.putImageData(img,ox,oy);edges(P,ctx,ox,oy)}
+function comicOrig(P,ctx){const {w,h,B}=P;posterOrig(P,ctx,0,0,0);
+ const cs=st.dot;
+ for(let y=0,row=0;y<h+cs;y+=cs*.866,row++){for(let x=(row%2)*cs/2;x<w+cs;x+=cs){
+  const xi=Math.min(w-1,x|0),yi=Math.min(h-1,y|0),i=yi*w+xi,v=B[i];if(v<.18||v>.9)continue;
+  const c=origCol(i,null,.55);ctx.fillStyle=`rgb(${c})`;
+  ctx.beginPath();ctx.arc(x,y,cs*.5*Math.sqrt(1-v),0,6.2832);ctx.fill()}}
+ edges(P,ctx,0,0)}
+function render(){
+ raf=0;if(!src)return;stage.classList.add('busy');
+ const ctx=out.getContext('2d');
+ if(showOrig){out.width=src.width;out.height=src.height;ctx.drawImage(src,0,0);stage.classList.remove('busy');return}
+ const P=prep(),{w,h}=P;
+ if(st.style==='warhol'){const g=8;out.width=w*2+g*3;out.height=h*2+g*3;ctx.fillStyle='#111';ctx.fillRect(0,0,out.width,out.height);
+  for(let k=0;k<4;k++){const ox=g+(k%2)*(w+g),oy=g+(k>>1)*(h+g);
+   if(st.orig)posterOrig(P,ctx,ox,oy,((k+st.rot)%4)*90);
+   else poster(P,PALS[(st.pal+k+st.rot)%PALS.length],st.lev,ctx,ox,oy)}}
+ else if(st.style==='comic'){out.width=w;out.height=h;st.orig?comicOrig(P,ctx):comic(P,PALS[st.pal],ctx)}
+ else{out.width=w;out.height=h;st.orig?posterOrig(P,ctx,0,0,0):poster(P,PALS[st.pal],st.lev,ctx,0,0)}
+ requestAnimationFrame(()=>stage.classList.remove('busy'));
+}
+function queue(){if(!raf)raf=requestAnimationFrame(render)}
+
+function sample(){
+ const c=document.createElement('canvas');c.width=640;c.height=500;const x=c.getContext('2d');
+ const bg=x.createLinearGradient(0,0,640,0);bg.addColorStop(0,'#cfd8e6');bg.addColorStop(1,'#7d8fa8');x.fillStyle=bg;x.fillRect(0,0,640,500);
+ for(let i=0;i<8;i++){x.fillStyle=i%2?'rgba(255,255,255,.18)':'rgba(0,0,0,.06)';x.fillRect(i*80,0,40,360)}
+ const tb=x.createLinearGradient(0,340,0,500);tb.addColorStop(0,'#a0623a');tb.addColorStop(1,'#4b2a16');x.fillStyle=tb;x.fillRect(0,340,640,160);
+ x.fillStyle='rgba(0,0,0,.35)';x.beginPath();x.ellipse(350,410,170,34,0,0,6.3);x.fill();
+ const ap=x.createRadialGradient(270,220,20,320,280,190);ap.addColorStop(0,'#ffd2c2');ap.addColorStop(.25,'#e8302a');ap.addColorStop(.8,'#7a0d0f');ap.addColorStop(1,'#3a0506');
+ x.fillStyle=ap;x.beginPath();x.moveTo(320,140);x.bezierCurveTo(460,90,520,250,450,350);x.bezierCurveTo(400,430,340,400,320,395);x.bezierCurveTo(300,400,240,430,190,350);x.bezierCurveTo(120,250,180,90,320,140);x.fill();
+ x.strokeStyle='#3b2412';x.lineWidth=10;x.lineCap='round';x.beginPath();x.moveTo(320,150);x.quadraticCurveTo(318,110,340,80);x.stroke();
+ const lf=x.createLinearGradient(345,60,430,110);lf.addColorStop(0,'#9be15d');lf.addColorStop(1,'#1f6b1a');x.fillStyle=lf;
+ x.beginPath();x.moveTo(342,92);x.quadraticCurveTo(390,40,440,78);x.quadraticCurveTo(395,120,342,92);x.fill();
+ x.fillStyle='rgba(255,255,255,.55)';x.beginPath();x.ellipse(250,200,22,40,-.5,0,6.3);x.fill();
+ const im=new Image();im.onload=()=>setSource(im,'Sample still life');im.src=c.toDataURL();
+}
+
+function loadFile(f){
+ if(!f||!f.type.startsWith('image/')){msg.textContent='That file isn’t an image — try a JPG, PNG or WebP.';return}
+ const url=URL.createObjectURL(f),im=new Image();
+ im.onload=()=>{setSource(im,f.name.length>28?f.name.slice(0,26)+'…':f.name);URL.revokeObjectURL(url);msg.textContent='Loaded. Try the styles and palettes.'};
+ im.onerror=()=>{msg.textContent='Couldn’t read that image. HEIC photos may need converting to JPG first.'};im.src=url;
+}
+
+$('file').addEventListener('change',e=>loadFile(e.target.files[0]));
+$('pick').addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();$('file').click()}});
+['dragenter','dragover'].forEach(t=>stage.addEventListener(t,e=>{e.preventDefault();stage.classList.add('drag')}));
+['dragleave','drop'].forEach(t=>stage.addEventListener(t,e=>{e.preventDefault();stage.classList.remove('drag')}));
+stage.addEventListener('drop',e=>loadFile(e.dataTransfer.files[0]));
+window.addEventListener('paste',e=>{const it=[...(e.clipboardData?.items||[])].find(i=>i.type.startsWith('image/'));if(it)loadFile(it.getAsFile())});
+
+document.querySelectorAll('.seg button').forEach(b=>b.addEventListener('click',()=>{
+ st.style=b.dataset.s;document.querySelectorAll('.seg button').forEach(o=>o.setAttribute('aria-pressed',o===b));
+ $('dotRow').classList.toggle('dim',st.style!=='comic');$('shuf').classList.toggle('dim',st.style!=='warhol');queue()}));
+$('pals').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;st.pal=+b.dataset.p;st.rot=0;drawPals();queue()});
+picks.forEach(inp=>inp.addEventListener('input',()=>{PALS[st.pal][+inp.dataset.c]=inp.value;
+ const sw=$('pals').children[st.pal].children[+inp.dataset.c];if(sw)sw.style.background=inp.value;queue()}));
+$('orig').addEventListener('change',e=>{st.orig=e.target.checked;st.rot=0;$('palBox').classList.toggle('dim',st.orig);queue()});
+[['lev','vLev'],['con','vCon'],['outl','vOut'],['dot','vDot']].forEach(([k,v])=>$(k).addEventListener('input',e=>{st[k]=+e.target.value;$(v).textContent=e.target.value;queue()}));
+$('shuf').addEventListener('click',()=>{st.rot=(st.rot+1)%PALS.length;queue()});
+const cmp=$('cmp');
+cmp.addEventListener('pointerdown',e=>{e.preventDefault();showOrig=true;queue()});
+['pointerup','pointerleave','pointercancel'].forEach(t=>cmp.addEventListener(t,()=>{if(showOrig){showOrig=false;queue()}}));
+$('dotRow').classList.add('dim');
+
+const saveBtn=$('save'),sheet=$('sheet');let dl=null;
+try{if(window.claude&&claude.use)claude.use('downloads').then(x=>{dl=x}).catch(()=>{})}catch(e){}
+function showSheet(){$('sheetImg').src=out.toDataURL('image/png');sheet.classList.add('on')}
+$('sheetX').addEventListener('click',()=>sheet.classList.remove('on'));
+sheet.addEventListener('click',e=>{if(e.target===sheet)sheet.classList.remove('on')});
+saveBtn.addEventListener('click',()=>{
+ if(!dl){showSheet();return}
+ out.toBlob(async blob=>{
+  try{await dl.save({filename:'pop-art-'+st.style+'.png',data:blob});msg.textContent='Downloaded!'}
+  catch(err){msg.textContent='Download was cancelled or blocked — use press-and-hold instead.';showSheet()}},'image/png')});
+
+sample();
+}
+</script>
+</body>
+</html>

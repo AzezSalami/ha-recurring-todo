@@ -11,6 +11,12 @@ const ERRORS = {
   not_found: "This task no longer exists. The list has been refreshed.",
 };
 
+const ACTIONS = {
+  done: { label: "Done", verb: "marked", tail: "as done", icon: "check" },
+  later: { label: "Later", verb: "snoozed", tail: "", icon: "clock" },
+  skip: { label: "Not doing", verb: "skipped", tail: "", icon: "close" },
+};
+
 const esc = (s) =>
   String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
@@ -20,6 +26,10 @@ const ICONS = {
   bell: "M21,19V20H3V19L5,17V11C5,7.9 7.03,5.17 10,4.29C10,4.19 10,4.1 10,4A2,2 0 0,1 12,2A2,2 0 0,1 14,4C14,4.1 14,4.19 14,4.29C16.97,5.17 19,7.9 19,11V17L21,19M14,21A2,2 0 0,1 12,23A2,2 0 0,1 10,21",
   bellOff: "M20.84,22.73L18.11,20H3V19L5,17V11C5,9.89 5.29,8.85 5.78,7.93L1.11,3.27L2.39,2L22.11,21.72L20.84,22.73M19,15.8V11C19,7.9 16.97,5.17 14,4.29C14,4.19 14,4.1 14,4A2,2 0 0,0 12,2A2,2 0 0,0 10,4C10,4.1 10,4.19 10,4.29C9.03,4.58 8.15,5.08 7.43,5.73L19,17.3V15.8M12,23A2,2 0 0,0 14,21H10A2,2 0 0,0 12,23Z",
   play: "M8,5.14V19.14L19,12.14L8,5.14Z",
+  check: "M21,7L9,19L3.5,13.5L4.91,12.09L9,16.17L19.59,5.59L21,7Z",
+  clock: "M12,20A8,8 0 0,0 20,12A8,8 0 0,0 12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20M12,2A10,10 0 0,1 22,12A10,10 0 0,1 12,22C6.47,22 2,17.5 2,12A10,10 0 0,1 12,2M12.5,7V12.25L17,14.92L16.25,16.15L11,13V7H12.5Z",
+  close: "M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z",
+  history: "M13.5,8H12V13L16.28,15.54L17,14.33L13.5,12.25V8M13,3A9,9 0 0,0 4,12H1L4.96,16.03L9,12H6A7,7 0 0,1 13,5A7,7 0 0,1 20,12A7,7 0 0,1 13,19C11.07,19 9.32,18.21 8.06,16.94L6.64,18.36C8.27,20 10.5,21 13,21A9,9 0 0,0 22,12A9,9 0 0,0 13,3Z",
   pencil: "M20.71,7.04C21.1,6.65 21.1,6 20.71,5.63L18.37,3.29C18,2.9 17.35,2.9 16.96,3.29L15.12,5.12L18.87,8.87M3,17.25V21H6.75L17.81,9.93L14.06,6.18L3,17.25Z",
   trash: "M19,4H15.5L14.5,3H9.5L8.5,4H5V6H19M6,19A2,2 0 0,0 8,21H16A2,2 0 0,0 18,19V7H6V19Z",
   phone: "M17,19H7V5H17M17,1H7C5.89,1 5,1.89 5,3V21A2,2 0 0,0 7,23H17A2,2 0 0,0 19,21V3C19,1.89 18.1,1 17,1Z",
@@ -43,6 +53,54 @@ class RecurringTodoPanel extends HTMLElement {
     this._saving = false;
     this._lastUpdated = null;
     this._rendered = false;
+    this._view = "tasks"; // or "history"
+    this._history = [];
+    this._historyFilter = "all";
+    this._unsub = null; // live updates for the current list
+    this._subscribedTo = null;
+    this._refreshTimer = null;
+  }
+
+  connectedCallback() {
+    if (this._hass && this._entryId) this._subscribe();
+  }
+
+  disconnectedCallback() {
+    this._unsubscribe();
+  }
+
+  async _subscribe() {
+    if (this._subscribedTo === this._entryId || !this._hass?.connection) return;
+    this._unsubscribe();
+    const entryId = this._entryId;
+    this._subscribedTo = entryId;
+    try {
+      const unsub = await this._hass.connection.subscribeMessage(() => this._scheduleRefresh(), {
+        type: "recurring_todo/subscribe",
+        entry_id: entryId,
+      });
+      if (this._subscribedTo === entryId) this._unsub = unsub;
+      else unsub();
+    } catch (err) {
+      this._subscribedTo = null; // fall back to watching the entity
+    }
+  }
+
+  _unsubscribe() {
+    if (this._unsub) {
+      try {
+        this._unsub();
+      } catch (e) {
+        /* connection gone */
+      }
+    }
+    this._unsub = null;
+    this._subscribedTo = null;
+  }
+
+  _scheduleRefresh() {
+    clearTimeout(this._refreshTimer);
+    this._refreshTimer = setTimeout(() => this._loadTasks({ quiet: true }), 250);
   }
 
   // ------------------------------------------------------------ HA props
@@ -107,7 +165,13 @@ class RecurringTodoPanel extends HTMLElement {
       this._renderMain();
     }
     try {
-      this._tasks = await this._hass.callWS({ type: "recurring_todo/tasks", entry_id: this._entryId });
+      const [tasks, history] = await Promise.all([
+        this._hass.callWS({ type: "recurring_todo/tasks", entry_id: this._entryId }),
+        this._hass.callWS({ type: "recurring_todo/history", entry_id: this._entryId, limit: 300 }).catch(() => []),
+      ]);
+      this._tasks = tasks;
+      this._history = history;
+      this._subscribe();
       const list = this._currentList();
       if (list) list.task_count = this._tasks.length;
       const st = list?.entity_id ? this._hass.states[list.entity_id] : null;
@@ -296,6 +360,19 @@ class RecurringTodoPanel extends HTMLElement {
             .join("")}</div>`
         : "";
 
+    const tabs = `
+      <div class="tabs" role="tablist">
+        <button role="tab" class="tab ${this._view === "tasks" ? "on" : ""}" aria-selected="${this._view === "tasks"}"
+          data-action="view" data-view="tasks">${icon("sync")}<span>Tasks</span></button>
+        <button role="tab" class="tab ${this._view === "history" ? "on" : ""}" aria-selected="${this._view === "history"}"
+          data-action="view" data-view="history">${icon("history")}<span>History</span></button>
+      </div>`;
+
+    if (this._view === "history") {
+      main.innerHTML = chips + this._historyView(list, tabs);
+      return;
+    }
+
     const count = this._tasks.length;
     const header = `
       <div class="head">
@@ -316,7 +393,147 @@ class RecurringTodoPanel extends HTMLElement {
     } else {
       body = `<div class="grid">${this._tasks.map((t) => this._card(t)).join("")}</div>`;
     }
-    main.innerHTML = chips + header + body;
+    main.innerHTML = chips + header + tabs + body;
+  }
+
+  // ------------------------------------------------------------ history
+  _durationText(seconds) {
+    // "6 min", "3 h 10 min", "2 days"; null for under a minute.
+    if (seconds == null || seconds < 60) return null;
+    const mins = Math.round(seconds / 60);
+    if (mins < 60) return `${mins} min`;
+    const h = Math.floor(mins / 60);
+    const m = mins % 60;
+    if (h < 24) return `${h} h${m ? ` ${m} min` : ""}`;
+    const d = Math.round(h / 24);
+    return `${d} day${d === 1 ? "" : "s"}`;
+  }
+
+  _responseText(seconds) {
+    if (seconds == null) return "";
+    const d = this._durationText(seconds);
+    return d ? `${d} after the reminder` : "within a minute of the reminder";
+  }
+
+  _dayKey(iso) {
+    const opts = { year: "numeric", month: "2-digit", day: "2-digit" };
+    if (this._tz) opts.timeZone = this._tz;
+    return new Intl.DateTimeFormat("en-CA", opts).format(new Date(iso));
+  }
+
+  _dayLabel(iso) {
+    const key = this._dayKey(iso);
+    const today = this._dayKey(new Date().toISOString());
+    const yesterday = this._dayKey(new Date(Date.now() - 864e5).toISOString());
+    if (key === today) return "Today";
+    if (key === yesterday) return "Yesterday";
+    const opts = { weekday: "long", day: "numeric", month: "long" };
+    if (this._tz) opts.timeZone = this._tz;
+    if (!key.startsWith(String(new Date().getFullYear()))) opts.year = "numeric";
+    return new Intl.DateTimeFormat(this._lang, opts).format(new Date(iso));
+  }
+
+  _clockText(iso) {
+    const opts = { hour: "numeric", minute: "2-digit", ...this._hour12 };
+    if (this._tz) opts.timeZone = this._tz;
+    return new Intl.DateTimeFormat(this._lang, opts).format(new Date(iso));
+  }
+
+  _historyView(list, tabs) {
+    const all = this._history;
+    const counts = { done: 0, later: 0, skip: 0 };
+    all.forEach((h) => counts[h.action] !== undefined && counts[h.action]++);
+    const times = all.map((h) => h.response_seconds).filter((x) => x != null).sort((a, b) => a - b);
+    const median = times.length ? times[Math.floor(times.length / 2)] : null;
+    const isAdmin = !!this._hass?.user?.is_admin;
+
+    const header = `
+      <div class="head">
+        <div>
+          <h1>${esc(list?.title || "")}</h1>
+          <div class="muted">${
+            all.length === 1 ? "1 reaction to a notification" : `${all.length} reactions to notifications`
+          }${median != null ? ` · usually answered within ${esc(this._durationText(median) || "a minute")}` : ""}</div>
+        </div>
+        ${
+          isAdmin && all.length
+            ? `<button class="btn text" data-action="clear-history">${icon("trash")}<span>Clear history</span></button>`
+            : ""
+        }
+      </div>`;
+
+    if (!all.length) {
+      return `${header}${tabs}<div class="empty">${icon("history")}<h2>No reactions yet</h2>
+        <p class="muted">When someone presses Done, Later or Not doing on a notification, it shows up here with who pressed it and when.</p></div>`;
+    }
+
+    const filters = ["all", "done", "later", "skip"]
+      .map((f) => {
+        const n = f === "all" ? all.length : counts[f];
+        const label = f === "all" ? "All" : ACTIONS[f].label;
+        return `<button class="chip small ${this._historyFilter === f ? "on" : ""} ${f}" data-action="filter" data-filter="${f}"
+          aria-pressed="${this._historyFilter === f}">${esc(label)}<span class="count">${n}</span></button>`;
+      })
+      .join("");
+
+    const shown = this._historyFilter === "all" ? all : all.filter((h) => h.action === this._historyFilter);
+    let rows = "";
+    let lastDay = null;
+    for (const h of shown) {
+      const day = this._dayKey(h.time);
+      if (day !== lastDay) {
+        rows += `<h2 class="day-head">${esc(this._dayLabel(h.time))}</h2>`;
+        lastDay = day;
+      }
+      rows += this._historyRow(h);
+    }
+    if (!shown.length) rows = `<p class="muted center">Nothing here with this filter.</p>`;
+
+    return `${header}${tabs}<div class="chips filters">${filters}</div><div class="timeline">${rows}</div>`;
+  }
+
+  _historyRow(h) {
+    const a = ACTIONS[h.action] || { verb: "reacted to", tail: "", icon: "bell" };
+    const who = h.user ? `<b>${esc(h.user)}</b>` : `<span class="muted">Someone</span>`;
+    const what = `<b>${esc(h.item)}</b>`;
+    const meta = [this._clockText(h.time)];
+    if (h.device) meta.push(`on ${esc(h.device)}`);
+    if (h.response_seconds != null) meta.push(esc(this._responseText(h.response_seconds)));
+    if (h.note === "not_on_list") meta.push("was already off the list");
+    return `
+      <div class="event">
+        <span class="badge ${esc(h.action)}" title="${esc(a.label || h.action)}">${icon(a.icon)}</span>
+        <div class="ev-main">
+          <div class="ev-title">${who} ${a.verb} ${what}${a.tail ? ` ${a.tail}` : ""}</div>
+          <div class="ev-meta muted">${meta.join(" · ")}</div>
+        </div>
+      </div>`;
+  }
+
+  _confirmClearHistory() {
+    const dlg = this.shadowRoot.querySelector(".confirm");
+    const list = this._currentList();
+    dlg.innerHTML = `
+      <form method="dialog">
+        <h2 id="confirm-title">Clear the history of “${esc(list?.title || "")}”?</h2>
+        <p class="muted">All ${this._history.length} recorded reactions are deleted. This can't be undone. Tasks and list items aren't affected.</p>
+        <div class="dialog-actions">
+          <button class="btn text" value="cancel">Cancel</button>
+          <button class="btn danger-fill" value="clear">Clear history</button>
+        </div>
+      </form>`;
+    dlg.onclose = async () => {
+      if (dlg.returnValue !== "clear") return;
+      try {
+        await this._hass.callWS({ type: "recurring_todo/history/clear", entry_id: this._entryId });
+        this._toast("History cleared");
+      } catch (err) {
+        this._toast(err?.message || "Couldn't clear the history");
+      }
+      this._loadTasks({ quiet: true });
+    };
+    dlg.returnValue = "";
+    dlg.showModal();
   }
 
   _card(t) {
@@ -364,11 +581,27 @@ class RecurringTodoPanel extends HTMLElement {
           this._entryId = id;
           this._writePref(id);
           this._tasks = [];
+          this._history = [];
+          this._unsubscribe();
           this._loadTasks();
         }
         break;
       case "add":
         this._openEditor(null);
+        break;
+      case "view":
+        if (btn.dataset.view !== this._view) {
+          this._view = btn.dataset.view;
+          this._renderMain();
+          if (this._view === "history") this._loadTasks({ quiet: true });
+        }
+        break;
+      case "filter":
+        this._historyFilter = btn.dataset.filter;
+        this._renderMain();
+        break;
+      case "clear-history":
+        this._confirmClearHistory();
         break;
       case "edit":
         if (task) this._openEditor(task);
@@ -763,6 +996,34 @@ const STYLES = `
   .chip.on { background: var(--rt-primary); border-color: var(--rt-primary); color: var(--text-primary-color, #fff); }
   .chip .count { font-size: 12px; opacity: .75; }
 
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--rt-divider); margin: -4px 0 16px; }
+  .tab {
+    display: inline-flex; align-items: center; gap: 8px; padding: 10px 16px; margin-bottom: -1px;
+    border: none; border-bottom: 2px solid transparent; background: none; color: var(--rt-muted);
+    font: inherit; font-size: 14px; font-weight: 500; cursor: pointer;
+  }
+  .tab svg { width: 18px; height: 18px; }
+  .tab.on { color: var(--rt-primary); border-bottom-color: var(--rt-primary); }
+  .tab:hover:not(.on) { color: var(--primary-text-color); }
+  .chip.small { padding: 4px 12px; font-size: 13px; }
+  .filters { padding-top: 0; }
+  .timeline { display: flex; flex-direction: column; }
+  .day-head { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--rt-muted); margin: 16px 0 6px; }
+  .timeline > .day-head:first-child { margin-top: 4px; }
+  .event {
+    display: flex; align-items: flex-start; gap: 12px; padding: 10px 12px;
+    background: var(--rt-card); border: 1px solid var(--rt-divider); border-radius: 12px; margin-bottom: 6px;
+  }
+  .badge { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 50%; flex: none; }
+  .badge svg { width: 18px; height: 18px; }
+  .badge.done { background: color-mix(in srgb, var(--success-color, #43a047) 16%, transparent); color: var(--success-color, #43a047); }
+  .badge.later { background: color-mix(in srgb, var(--warning-color, #ffa600) 18%, transparent); color: var(--warning-color, #ffa600); }
+  .badge.skip { background: var(--rt-input-bg); color: var(--rt-muted); }
+  .ev-main { min-width: 0; flex: 1; }
+  .ev-title { font-size: 14px; line-height: 1.4; overflow-wrap: anywhere; }
+  .ev-title b { font-weight: 600; }
+  .ev-meta { font-size: 12px; margin-top: 2px; }
+  .center { text-align: center; }
   .head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin: 8px 0 16px; flex-wrap: wrap; }
 
   .btn {

@@ -34,6 +34,9 @@ _LOGGER = logging.getLogger(__name__)
 
 STORAGE_VERSION = 1
 
+# How many button presses are kept per list (oldest are dropped first).
+HISTORY_LIMIT = 1000
+
 STATUS_OPEN = "needs_action"
 STATUS_DONE = "completed"
 
@@ -84,6 +87,8 @@ class RecurringTodoManager:
         self.tasks: dict[str, dict[str, Any]] = {}
         # uid -> item info for notifications that may still be on a phone
         self.notified: dict[str, dict[str, Any]] = {}
+        # Button presses on notifications, oldest first.
+        self.history: list[dict[str, Any]] = []
         self._listeners: list[Callable[[], None]] = []
         self._unsubs: list[CALLBACK_TYPE] = []
 
@@ -122,9 +127,17 @@ class RecurringTodoManager:
         self.items = data.get("items", [])
         self.tasks = data.get("tasks", {})
         self.notified = data.get("notified", {})
+        self.history = data.get("history", [])
 
     async def async_save(self) -> None:
-        await self._store.async_save({"items": self.items, "tasks": self.tasks, "notified": self.notified})
+        await self._store.async_save(
+            {
+                "items": self.items,
+                "tasks": self.tasks,
+                "notified": self.notified,
+                "history": self.history,
+            }
+        )
 
     async def async_start(self) -> None:
         self._unsubs.append(
@@ -390,6 +403,7 @@ class RecurringTodoManager:
             "description": item.get("description"),
             "task_id": item.get("task_id"),
             "services": services,
+            "sent_at": dt_util.now().isoformat(),
         }
         while len(self.notified) > 200:
             self.notified.pop(next(iter(self.notified)))
@@ -430,18 +444,31 @@ class RecurringTodoManager:
         if len(parts) != 3 or parts[0] != ACTION_PREFIX:
             return
         _, act, uid = parts
+        if act not in (ACTION_DONE, ACTION_LATER, ACTION_SKIP):
+            return
         item = self.get_item(uid)
         sent = self.notified.get(uid)
         if item is None and sent is None:
             # Not ours (another list) or long gone.
             return
         sent_to = list((sent or {}).get("services") or [])
+        sent_at = (sent or {}).get("sent_at")
+        summary = item["summary"] if item else sent["summary"]
+        task_id = item.get("task_id") if item else sent.get("task_id")
+
+        if item is None and act != ACTION_LATER:
+            # Already removed from the list: just tidy up the phones.
+            self.notified.pop(uid, None)
+            await self._async_record(event, act, uid, summary, task_id, sent_at, note="not_on_list")
+            await self._async_changed()
+            await self._async_clear_notification(uid, sent_to)
+            return
+        if item is not None and act == ACTION_DONE and item["status"] == STATUS_DONE and sent is None:
+            # Done pressed again (e.g. on a second phone): nothing changes.
+            await self._async_clear_notification(uid, sent_to)
+            return
+
         if item is None:
-            if act != ACTION_LATER:
-                self.notified.pop(uid, None)
-                await self._async_clear_notification(uid, sent_to)
-                await self._async_changed()
-                return
             # Removed from the list meanwhile: "Later" puts it back.
             item = {
                 "uid": uid,
@@ -461,22 +488,82 @@ class RecurringTodoManager:
         elif act == ACTION_SKIP:
             self.items.remove(item)
             self.notified.pop(uid, None)
-        elif act == ACTION_LATER:
+        else:  # ACTION_LATER
             later = dt_util.now() + timedelta(minutes=self.later_minutes)
             item["status"] = STATUS_OPEN  # put it back on the list
             item["due"] = later.isoformat()
             item["snooze_until"] = later.isoformat()
-        else:
-            return
 
+        record = await self._async_record(event, act, uid, summary, task_id, sent_at)
         await self._async_changed()
         await self._async_clear_notification(uid, sent_to)
         self.hass.bus.async_fire(
             EVENT_ACTION_HANDLED,
             {
                 "entry_id": self.entry.entry_id,
+                "entity_id": self.entity_id,
                 "action": act.lower(),
-                "item": item["summary"],
+                "item": summary,
                 "uid": uid,
+                "task_id": task_id,
+                "user_id": record["user_id"],
+                "user": record["user"],
+                "device": record["device"],
             },
+            context=event.context,
         )
+
+    # ---------------------------------------------------------------- history
+    @property
+    def entity_id(self) -> str | None:
+        from homeassistant.helpers import entity_registry as er
+
+        return er.async_get(self.hass).async_get_entity_id("todo", DOMAIN, self.entry.entry_id)
+
+    async def _async_record(
+        self,
+        event: Event,
+        act: str,
+        uid: str,
+        summary: str,
+        task_id: str | None,
+        sent_at: str | None,
+        note: str | None = None,
+    ) -> dict[str, Any]:
+        """Add a button press to the history (does not save)."""
+        user_id = event.context.user_id
+        user_name = None
+        if user_id:
+            user = await self.hass.auth.async_get_user(user_id)
+            user_name = user.name if user else None
+        data = event.data
+        # iOS sends the device name with the action; Android does not.
+        device = data.get("sourceDeviceName") or data.get("device_name") or None
+        now = dt_util.now()
+        delay = None
+        if sent_at:
+            try:
+                delay = max(0, round((now - datetime.fromisoformat(sent_at)).total_seconds()))
+            except ValueError:
+                delay = None
+        record = {
+            "time": now.isoformat(),
+            "action": act.lower(),
+            "item": summary,
+            "task_id": task_id,
+            "uid": uid,
+            "user_id": user_id,
+            "user": user_name,
+            "device": device,
+            "sent_at": sent_at,
+            "response_seconds": delay,
+            "note": note,
+        }
+        self.history.append(record)
+        if len(self.history) > HISTORY_LIMIT:
+            del self.history[: len(self.history) - HISTORY_LIMIT]
+        return record
+
+    async def async_clear_history(self) -> None:
+        self.history = []
+        await self._async_changed()

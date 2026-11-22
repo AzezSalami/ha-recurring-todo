@@ -29,6 +29,9 @@ def async_register(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_update_task)
     websocket_api.async_register_command(hass, ws_delete_task)
     websocket_api.async_register_command(hass, ws_run_task)
+    websocket_api.async_register_command(hass, ws_history)
+    websocket_api.async_register_command(hass, ws_clear_history)
+    websocket_api.async_register_command(hass, ws_subscribe)
 
 
 def _manager(hass: HomeAssistant, connection, msg: dict[str, Any]) -> RecurringTodoManager | None:
@@ -192,4 +195,49 @@ async def ws_run_task(hass: HomeAssistant, connection, msg: dict[str, Any]) -> N
         connection.send_error(msg["id"], "not_found", "Task not found")
         return
     await manager.async_run_task(msg["task_id"])
+    connection.send_result(msg["id"])
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/history",
+        vol.Required("entry_id"): str,
+        vol.Optional("limit", default=200): vol.All(int, vol.Range(min=1, max=1000)),
+    }
+)
+@callback
+def ws_history(hass: HomeAssistant, connection, msg: dict[str, Any]) -> None:
+    """Button presses on notifications, newest first."""
+    if (manager := _manager(hass, connection, msg)) is None:
+        return
+    connection.send_result(msg["id"], list(reversed(manager.history[-msg["limit"]:])))
+
+
+@websocket_api.websocket_command(
+    {vol.Required("type"): f"{DOMAIN}/history/clear", vol.Required("entry_id"): str}
+)
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_clear_history(hass: HomeAssistant, connection, msg: dict[str, Any]) -> None:
+    """Delete the history of one list (admins only)."""
+    if (manager := _manager(hass, connection, msg)) is None:
+        return
+    await manager.async_clear_history()
+    connection.send_result(msg["id"])
+
+
+@websocket_api.websocket_command(
+    {vol.Required("type"): f"{DOMAIN}/subscribe", vol.Required("entry_id"): str}
+)
+@callback
+def ws_subscribe(hass: HomeAssistant, connection, msg: dict[str, Any]) -> None:
+    """Send a message whenever the list, its tasks or its history change."""
+    if (manager := _manager(hass, connection, msg)) is None:
+        return
+
+    @callback
+    def forward() -> None:
+        connection.send_message(websocket_api.event_message(msg["id"], {"changed": True}))
+
+    connection.subscriptions[msg["id"]] = manager.async_add_listener(forward)
     connection.send_result(msg["id"])
