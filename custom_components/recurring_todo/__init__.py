@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from pathlib import Path
 
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
@@ -14,6 +16,8 @@ from homeassistant.loader import async_get_integration
 from . import websocket
 from .const import DOMAIN
 from .manager import RecurringTodoManager
+
+_LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = [Platform.TODO]
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
@@ -72,13 +76,27 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
 
 async def _async_register_panel(hass: HomeAssistant) -> None:
-    """Add the "Recurring To-do" sidebar panel (once, for all lists)."""
+    """Add the "Recurring To-do" sidebar panel (once, for all lists).
+
+    Lists are set up in parallel at startup, so this runs under a lock: without it
+    two lists could both see "no panel yet" and the second registration would fail.
+    A problem with the panel never stops a list from loading.
+    """
     if "frontend" not in hass.config.components or hass.http is None:
         return  # e.g. a minimal setup without the web UI
     data = hass.data.setdefault(DOMAIN, {})
-    if data.get("panel"):
-        return
-    from homeassistant.components import panel_custom
+    lock: asyncio.Lock = data.setdefault("panel_lock", asyncio.Lock())
+    async with lock:
+        if data.get("panel"):
+            return
+        try:
+            await _async_add_panel(hass, data)
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception("Could not add the Recurring To-do sidebar page")
+
+
+async def _async_add_panel(hass: HomeAssistant, data: dict) -> None:
+    from homeassistant.components import frontend, panel_custom
     from homeassistant.components.http import StaticPathConfig
 
     if not data.get("static"):
@@ -86,6 +104,11 @@ async def _async_register_panel(hass: HomeAssistant) -> None:
             [StaticPathConfig(STATIC_URL, str(FRONTEND_DIR), cache_headers=False)]
         )
         data["static"] = True
+
+    # Left over from before a reload (e.g. our flag was lost): replace it.
+    panels_key = getattr(frontend, "DATA_PANELS", "frontend_panels")
+    if PANEL_URL_PATH in hass.data.get(panels_key, {}):
+        frontend.async_remove_panel(hass, PANEL_URL_PATH)
 
     version = (await async_get_integration(hass, DOMAIN)).version
     await panel_custom.async_register_panel(
